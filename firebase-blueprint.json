@@ -1,0 +1,175 @@
+{
+  "entities": {
+    "Nurse": {
+      "title": "Nurse",
+      "description": "Registered nurse profile and authentication record",
+      "type": "object",
+      "properties": {
+        "nurseId": { "type": "string", "description": "Unique nurse ID" },
+        "nurseName": { "type": "string", "description": "Nurse full name" },
+        "licenseNumber": { "type": "string", "description": "RN license number" },
+        "department": { "type": "string", "description": "Hospital department ward" },
+        "shift": { "type": "string", "enum": ["DAY", "EVENING", "NIGHT"] },
+        "role": { "type": "string", "enum": ["PRIMARY_RN", "CHARGE_RN"] },
+        "email": { "type": "string", "description": "Nurse email" }
+      },
+      "required": ["nurseId", "nurseName", "licenseNumber", "department"]
+    },
+    "Patient": {
+      "title": "Patient",
+      "description": "Inpatient demographic and clinical verification data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Patient hospital ID" },
+        "name": { "type": "string", "description": "Patient name" },
+        "gender": { "type": "string", "enum": ["M", "F"] },
+        "age": { "type": "number", "description": "Patient age in years" },
+        "room": { "type": "string", "description": "Ward room number" },
+        "department": { "type": "string", "description": "Attending department" },
+        "diagnosis": { "type": "string", "description": "Primary diagnosis" },
+        "admissionDate": { "type": "string", "description": "Admission date" },
+        "attendingPhysician": { "type": "string", "description": "Doctor name" },
+        "bloodType": { "type": "string", "description": "ABO/Rh blood type" },
+        "bedNumber": { "type": "string", "description": "Bed number" }
+      },
+      "required": ["id", "name", "gender", "age", "room"]
+    },
+    "MedicationOrder": {
+      "title": "MedicationOrder",
+      "description": "Prescribed medication order with barcode verification state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Prescription ID" },
+        "patientId": { "type": "string", "description": "Target patient ID" },
+        "medicationName": { "type": "string", "description": "Medication brand name" },
+        "route": { "type": "string", "description": "Administration route" },
+        "status": { "type": "string", "enum": ["PENDING_VERIFY", "VERIFIED", "ADMINISTERED"] },
+        "dosage": { "type": "string", "description": "Dosage quantity" },
+        "instructions": { "type": "string", "description": "Clinical instructions" },
+        "prescribedDoctor": { "type": "string", "description": "Prescribing physician" },
+        "orderTime": { "type": "string", "description": "Order placement time" },
+        "isEducationalMock": { "type": "boolean", "description": "Educational mock flag" },
+        "barcodeValue": { "type": "string", "description": "1D Code 128 barcode value" }
+      },
+      "required": ["id", "patientId", "medicationName", "route", "status"]
+    },
+    "DemoSession": {
+      "title": "DemoSession",
+      "description": "Interactive demonstration session shared between Station PC and Mobile Capture",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Unique session ID" },
+        "sessionNumber": { "type": "number", "description": "Incremental session number" },
+        "nurseId": { "type": "string", "description": "Owner nurse ID" },
+        "patientId": { "type": "string", "description": "Session patient ID" },
+        "status": { "type": "string", "enum": ["ACTIVE", "COMPLETED", "ARCHIVED"] },
+        "startedAt": { "type": "string", "description": "Session start timestamp" },
+        "endedAt": { "type": "string", "description": "Session end timestamp" },
+        "eventsCount": { "type": "number", "description": "Total event count" },
+        "emrTransmitted": { "type": "boolean", "description": "Whether note was transmitted to EMR" },
+        "lastSyncAt": { "type": "string", "description": "Last synchronization ISO timestamp" }
+      },
+      "required": ["sessionId", "sessionNumber", "status", "startedAt"]
+    },
+    "NursingEvent": {
+      "title": "NursingEvent",
+      "description": "Immutable append-only bedside nursing care action event log",
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "description": "Unique event ID" },
+        "patientId": { "type": "string", "description": "Associated patient ID" },
+        "sessionId": { "type": "string", "description": "Associated session ID" },
+        "nurseId": { "type": "string", "description": "Action nurse ID" },
+        "nurseName": { "type": "string", "description": "Action nurse name" },
+        "eventType": { "type": "string", "enum": ["PATIENT_VERIFY", "MEDICATION_VERIFY", "IV_SITE_ASSESS", "INFUSION_START", "MEDICATION_START", "INFUSION_END", "MEDICATION_END", "VOICE_NOTE"] },
+        "eventTimestamp": { "type": "string", "description": "Formatted local time" },
+        "rawDate": { "type": "string", "description": "ISO timestamp" },
+        "occurredAt": { "type": "string", "description": "Clinical action occurrence ISO timestamp" },
+        "eventDescription": { "type": "string", "description": "Human-readable description" },
+        "eventSource": { "type": "string", "description": "Capture source mechanism" },
+        "source": { "type": "string", "description": "Specific sub-source e.g. MANUAL_CONFIRMATION, VOICE_AI_CONFIRMED, speech" },
+        "transcript": { "type": "string", "description": "Voice recognition transcript" },
+        "linkedStep": { "type": "string", "description": "Optional linked clinical stage" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "eventStatus": { "type": "string", "enum": ["COMPLETED", "IN_PROGRESS", "PENDING"] },
+        "verificationResult": { "type": "string", "enum": ["MATCHED", "MISMATCHED", "CONFIRMED", "WARNING"] },
+        "metadata": { "type": "object", "description": "Auxiliary metadata" }
+      },
+      "required": ["eventId", "sessionId", "patientId", "nurseId", "eventType", "source", "occurredAt", "createdAt"]
+    },
+    "NursingRecord": {
+      "title": "NursingRecord",
+      "description": "AI-generated and nurse-approved official nursing progress note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Note record ID" },
+        "patientId": { "type": "string", "description": "Patient ID" },
+        "sessionId": { "type": "string", "description": "Session ID" },
+        "nurseId": { "type": "string", "description": "Signer nurse ID" },
+        "content": { "type": "string", "description": "Clinical narrative content" },
+        "status": { "type": "string", "enum": ["DRAFT_PENDING_REVIEW", "APPROVED"] },
+        "version": { "type": "number", "description": "Note version" },
+        "generatedBy": { "type": "string", "description": "Generation engine name" },
+        "generatedAt": { "type": "string", "description": "Generation ISO time" },
+        "approvedAt": { "type": "string", "description": "Approval timestamp" },
+        "approver": { "type": "string", "description": "Nurse approver signature name" },
+        "approverId": { "type": "string", "description": "Nurse approver ID" },
+        "emrTransmitted": { "type": "boolean", "description": "EMR transfer status" }
+      },
+      "required": ["id", "patientId", "content", "status", "version", "generatedBy"]
+    },
+    "EMRTransfer": {
+      "title": "EMRTransfer",
+      "description": "Electronic signature and immutable hospital EMR transmission log",
+      "type": "object",
+      "properties": {
+        "transferId": { "type": "string", "description": "Transfer ID" },
+        "emrRecordId": { "type": "string", "description": "Hospital record ID" },
+        "chartNumber": { "type": "string", "description": "Chart number" },
+        "patientId": { "type": "string", "description": "Patient ID" },
+        "patientName": { "type": "string", "description": "Patient name" },
+        "room": { "type": "string", "description": "Room" },
+        "content": { "type": "string", "description": "Transmitted content" },
+        "approvedNurse": { "type": "string", "description": "Signed nurse name" },
+        "approvedAt": { "type": "string", "description": "Approval timestamp" },
+        "transferredAt": { "type": "string", "description": "Transmission timestamp" },
+        "version": { "type": "number", "description": "Version number" },
+        "status": { "type": "string", "enum": ["TRANSMITTED", "FAILED", "PENDING"] },
+        "signatureHash": { "type": "string", "description": "Digital cryptographic signature hash" },
+        "eventCount": { "type": "number", "description": "Count of linked nursing events" },
+        "targetSystem": { "type": "string", "description": "Target HIS/EMR server name" }
+      },
+      "required": ["transferId", "emrRecordId", "chartNumber", "patientId", "content", "approvedNurse", "status", "signatureHash"]
+    }
+  },
+  "firestore": {
+    "/nurses/{nurseId}": {
+      "schema": "Nurse",
+      "description": "Hospital nurses profiles"
+    },
+    "/patients/{patientId}": {
+      "schema": "Patient",
+      "description": "Inpatient verification registry"
+    },
+    "/medicationOrders/{orderId}": {
+      "schema": "MedicationOrder",
+      "description": "Medication prescription orders"
+    },
+    "/demoSessions/{sessionId}": {
+      "schema": "DemoSession",
+      "description": "Shared demonstration sessions"
+    },
+    "/nursingEvents/{eventId}": {
+      "schema": "NursingEvent",
+      "description": "Bedside nursing care event stream"
+    },
+    "/nursingRecords/{recordId}": {
+      "schema": "NursingRecord",
+      "description": "AI-assisted nursing progress notes"
+    },
+    "/emrTransfers/{transferId}": {
+      "schema": "EMRTransfer",
+      "description": "Immutable EMR transmission log"
+    }
+  }
+}

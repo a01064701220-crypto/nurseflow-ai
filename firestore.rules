@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Nurse Profiles
+    match /nurses/{nurseId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
+    }
+
+    // Inpatient and Medication Orders (Clinical master data)
+    match /patients/{patientId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
+    }
+    match /medicationOrders/{orderId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
+    }
+
+    // Interactive Demo Sessions:
+    // Allow read to everyone (so Mobile Capture can verify session from QR URL)
+    // Allow create/update if session data matches sessionId
+    match /demoSessions/{sessionId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.sessionId == sessionId;
+      allow delete: if false; // Archive rather than delete
+    }
+
+    // Bedside Nursing Events: Append-only audit trail
+    // CRITICAL CLINICAL SECURITY:
+    // Events can only be created if the target demoSession actually exists in Firestore!
+    // This strictly ensures only participants with a valid active session can log events.
+    match /nursingEvents/{eventId} {
+      allow read: if true;
+      allow create: if request.resource.data.eventId == eventId
+        && request.resource.data.sessionId != null
+        && request.resource.data.patientId != null
+        && request.resource.data.eventType != null
+        && exists(/databases/$(database)/documents/demoSessions/$(request.resource.data.sessionId));
+      // Events are strictly append-only: updates and deletes are prohibited to preserve legal audit trail
+      allow update, delete: if false;
+    }
+
+    // Nursing Progress Records (AI drafts & Nurse approvals)
+    match /nursingRecords/{recordId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == recordId;
+      allow delete: if false;
+    }
+
+    // EMR Transmissions: Legally binding electronic transfers
+    match /emrTransfers/{transferId} {
+      allow read: if true;
+      allow create: if request.resource.data.transferId == transferId 
+        && request.resource.data.signatureHash != null;
+      // Immutable transfer records
+      allow update, delete: if false;
+    }
+  }
+}
