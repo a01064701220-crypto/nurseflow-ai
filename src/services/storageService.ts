@@ -313,10 +313,10 @@ export class StorageService {
         list.push(d.data() as DemoSession);
       });
       list.sort((a, b) => {
-        if (b.startedAt && a.startedAt) {
-          return b.startedAt.localeCompare(a.startedAt);
-        }
-        return (b.sessionNumber || 0) - (a.sessionNumber || 0);
+        // The ID uses a UTC date while startedAt is a local time of day.
+        // lastSyncAt is an ISO timestamp and gives an accurate recent-activity order.
+        return (b.lastSyncAt || '').localeCompare(a.lastSyncAt || '')
+          || (b.sessionNumber || 0) - (a.sessionNumber || 0);
       });
       return list;
     } catch (err) {
@@ -458,11 +458,17 @@ export class StorageService {
     const eventId = `evt_handoff_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     await runTransaction(db, async (transaction) => {
       const snapshot = await transaction.get(sessionRef);
+      const nextProfile = await transaction.get(doc(db, 'nurses', nextUid));
       if (!snapshot.exists()) throw new Error('세션을 찾을 수 없습니다.');
       const session = snapshot.data() as DemoSession;
       assertSessionAccess(session, user.uid, true);
       if (!(session.participantUids || []).includes(nextUid)) throw new Error('먼저 새 담당 간호사의 참여를 승인해 주세요.');
       if (nextUid === user.uid) throw new Error('현재 담당 간호사와 같은 계정입니다.');
+      if (!nextProfile.exists() || nextProfile.data().approved !== true) {
+        throw new Error('새 담당자는 승인된 교육용 시연 계정이어야 합니다.');
+      }
+      const history = session.handoffHistory || [];
+      if (!Array.isArray(history)) throw new Error('교대 이력 형식이 올바르지 않습니다.');
       const event: NursingEvent = {
         eventId,
         sessionId,
@@ -479,7 +485,11 @@ export class StorageService {
         metadata: { fromUid: user.uid, toUid: nextUid },
       };
       transaction.set(doc(db, 'nursingEvents', eventId), event);
-      transaction.update(sessionRef, { activeNurseUid: nextUid, lastSyncAt: now });
+      transaction.update(sessionRef, {
+        activeNurseUid: nextUid,
+        lastSyncAt: now,
+        handoffHistory: [...history, { fromUid: user.uid, toUid: nextUid, at: now }],
+      });
     });
     const updated = await this.fetchSessionFromFirestore(sessionId);
     if (!updated) throw new Error('교대 후 세션을 다시 읽지 못했습니다.');

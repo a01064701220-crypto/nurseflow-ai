@@ -31,6 +31,7 @@ import {
   ArrowRight,
   Sliders,
   Layers,
+  Archive,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -54,8 +55,9 @@ import { AiDraftSection } from './AiDraftSection';
 import { EmrViewer } from './EmrViewer';
 import { DemoPrepView } from './DemoPrepView';
 import { EmrTransmissionModal } from './EmrTransmissionModal';
+import { SessionArchiveView } from './SessionArchiveView';
 
-export type StationTab = 'dashboard' | 'records' | 'prep';
+export type StationTab = 'dashboard' | 'records' | 'prep' | 'archive';
 
 interface StationViewProps {
   nurse: any;
@@ -68,6 +70,7 @@ interface StationViewProps {
   draftNote: NursingRecord | null;
   emrRecords: EMRTransfer[];
   onStartNewSession: () => void;
+  onOpenSession: (sessionId: string) => Promise<void>;
   onUpdateDraft: (draft: NursingRecord) => Promise<void>;
   onOpenEmrModal: () => void;
   isEmrModalOpen: boolean;
@@ -95,6 +98,7 @@ export const StationView: React.FC<StationViewProps> = ({
   draftNote,
   emrRecords,
   onStartNewSession,
+  onOpenSession,
   onUpdateDraft,
   onOpenEmrModal,
   isEmrModalOpen,
@@ -192,42 +196,49 @@ export const StationView: React.FC<StationViewProps> = ({
     }
   }, [stationScrollTarget, onClearScrollTarget]);
 
+  // A newly created or reopened session starts on its own dashboard.
+  useEffect(() => {
+    setActiveTab('dashboard');
+  }, [currentSession.sessionId]);
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">
       {/* Top Station Header */}
       <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-xs">
-        {/* Desktop Header: hidden md:flex (Preserved exactly as primary PC station) */}
-        <div className="hidden md:flex max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 items-center justify-between gap-4">
+        {/* Desktop controls wrap into a dedicated navigation row at narrower PC widths. */}
+        <div className="hidden md:grid grid-cols-[minmax(0,1fr)_auto] max-w-7xl mx-auto px-4 lg:px-8 py-2.5 items-center gap-x-4 gap-y-2">
           {/* Brand & Mode Identification */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center font-black shadow-md shadow-teal-600/20 shrink-0">
               <Monitor className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white">
+                <span className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
                   NurseFlow Station
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-bold border border-teal-300 dark:border-teal-800">
+                <span className="hidden lg:inline-flex text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-bold border border-teal-300 dark:border-teal-800 whitespace-nowrap">
                   PC 간호 데스크
                 </span>
-                <span className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                <span className="hidden xl:inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 whitespace-nowrap">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Cloud Firestore 실시간 연동
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                병동 {nurse.department} · {nurse.nurseName} 간호사 ({nurse.licenseNumber})
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                {nurse.accountType === 'EDUCATIONAL_DEMO'
+                  ? `교육용 시연 · ${nurse.nurseName} · 면허 미검증`
+                  : `병동 ${nurse.department} · ${nurse.nurseName} 간호사${nurse.licenseNumber ? ` (${nurse.licenseNumber})` : ''}`}
               </p>
             </div>
           </div>
 
           {/* Desktop Navigation Tabs */}
-          <nav className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200 dark:border-slate-700/80">
+          <nav aria-label="간호사 데스크 메뉴" className="col-span-2 grid grid-cols-4 gap-1 w-full max-w-3xl mx-auto bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200 dark:border-slate-700/80">
             <button
               type="button"
               onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`min-w-0 px-2 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'dashboard'
                   ? 'bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -239,7 +250,7 @@ export const StationView: React.FC<StationViewProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('records')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`min-w-0 px-2 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'records'
                   ? 'bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -251,7 +262,7 @@ export const StationView: React.FC<StationViewProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('prep')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`min-w-0 px-2 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'prep'
                   ? 'bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -260,20 +271,32 @@ export const StationView: React.FC<StationViewProps> = ({
               <Printer className="w-3.5 h-3.5" />
               <span>라벨 준비실</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('archive')}
+              className={`min-w-0 px-2 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'archive'
+                  ? 'bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5 shrink-0" />
+              <span>시연 기록 보관함</span>
+            </button>
           </nav>
 
           {/* Quick Action & Modals Trigger (Desktop) */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Open Phone QR Modal */}
             <button
               type="button"
               onClick={() => setIsQrModalOpen(true)}
-              className="text-xs px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-100 font-semibold flex items-center gap-1.5 shadow-xs transition"
+              className="text-xs px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-100 font-semibold flex items-center gap-1.5 shadow-xs transition whitespace-nowrap"
               title="스마트폰에서 현장 수집기(Capture) 연결"
             >
               <Smartphone className="w-3.5 h-3.5 text-sky-600" />
               <span className="hidden lg:inline">아이폰 연결 QR</span>
-              <span className="lg:hidden">아이폰 연결</span>
+              <span className="lg:hidden">연결 QR</span>
             </button>
 
             {/* Diagnostics Button */}
@@ -356,8 +379,9 @@ export const StationView: React.FC<StationViewProps> = ({
             </button>
             <button
               type="button"
+              disabled={!canWrite}
               onClick={() => onSwitchMode('CAPTURE')}
-              className="px-2.5 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/70 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-bold text-xs flex items-center gap-1 hover:bg-sky-100 transition shadow-xs"
+              className="px-2.5 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/70 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-bold text-xs flex items-center gap-1 hover:bg-sky-100 transition shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
               title="웨어러블 모바일 Capture로 전환"
             >
               <Smartphone className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
@@ -378,6 +402,14 @@ export const StationView: React.FC<StationViewProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {!canWrite && (
+          <div role="status" className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <strong>세션 #{currentSession.sessionNumber} · 조회 전용</strong>
+            <span className="block mt-1">{currentSession.status !== 'ACTIVE'
+              ? '완료된 세션의 기록을 볼 수 있습니다. 새 기록은 작성할 수 없습니다.'
+              : '현재 담당 간호사가 아니므로 기록을 볼 수 있지만 이 세션에 새 기록을 작성할 수 없습니다.'}</span>
+          </div>
+        )}
         {/* ========================================================================= */}
         {/* DESKTOP LAYOUT (md:block) - Preserved exactly as the primary PC workstation */}
         {/* ========================================================================= */}
@@ -487,6 +519,16 @@ export const StationView: React.FC<StationViewProps> = ({
 
           {/* Desktop Tab 3: Label Preparation Tab */}
           {activeTab === 'prep' && <DemoPrepView />}
+
+          {/* PC-only, read-only archive of authorized cloud sessions. */}
+          {activeTab === 'archive' && (
+            <SessionArchiveView
+              currentSession={currentSession}
+              currentEvents={sessionEvents}
+              onOpenSession={onOpenSession}
+              onStartNewSession={() => setIsSessionConfirmOpen(true)}
+            />
+          )}
         </div>
 
         {/* ========================================================================= */}
@@ -494,7 +536,7 @@ export const StationView: React.FC<StationViewProps> = ({
         {/* ========================================================================= */}
         <div className="block md:hidden space-y-4">
           {/* Sub-tab Navigation if not on main dashboard */}
-          {activeTab !== 'dashboard' && (
+          {activeTab !== 'dashboard' && activeTab !== 'archive' && (
             <div className="flex items-center justify-between p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <button
                 type="button"
@@ -522,7 +564,7 @@ export const StationView: React.FC<StationViewProps> = ({
           {activeTab === 'prep' && <DemoPrepView />}
 
           {/* Mobile Primary Dashboard Auxiliary View */}
-          {activeTab === 'dashboard' && (
+          {(activeTab === 'dashboard' || activeTab === 'archive') && (
             <>
               {/* Wearable Prototype Context Banner */}
               <div className="p-3 bg-gradient-to-r from-teal-950/60 to-slate-900 rounded-2xl border border-teal-500/30 text-xs text-slate-300 space-y-1">
@@ -685,7 +727,7 @@ export const StationView: React.FC<StationViewProps> = ({
                   {/* 5. Mock EMR 전송 및 전송 결과 조회 버튼 */}
                   <button
                     type="button"
-                    disabled={!canWrite || (!draftNote?.emrTransmitted && emrRecords.length === 0 && draftNote?.status !== 'APPROVED')}
+                    disabled={draftNote?.emrTransmitted || emrRecords.length > 0 ? false : !canWrite || draftNote?.status !== 'APPROVED'}
                     onClick={() => {
                       if (draftNote?.emrTransmitted || emrRecords.length > 0) {
                         setActiveTab('records');
@@ -736,8 +778,9 @@ export const StationView: React.FC<StationViewProps> = ({
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <button
                       type="button"
+                      disabled={!canWrite}
                       onClick={() => onSwitchMode('CAPTURE')}
-                      className="p-2.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 text-left hover:bg-purple-100 transition flex items-center justify-between"
+                      className="p-2.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 text-left hover:bg-purple-100 transition flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <div className="flex items-center gap-2">
                         <Camera className="w-3.5 h-3.5 text-purple-600" />
@@ -1078,7 +1121,7 @@ export const StationView: React.FC<StationViewProps> = ({
                   새로운 시연 세션을 시작하시겠습니까?
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  현재 세션(#{currentSession.sessionNumber})의 실시간 이벤트는 안전하게 보존되며 신규 클라우드 세션이 발급됩니다.
+                  현재 세션(#{currentSession.sessionNumber})의 기록은 PC 시연 기록 보관함에서 계속 조회할 수 있고, 신규 클라우드 세션으로 이동합니다.
                 </p>
               </div>
             </div>
@@ -1199,4 +1242,3 @@ export const StationView: React.FC<StationViewProps> = ({
     </div>
   );
 };
-

@@ -448,6 +448,19 @@ export default function App() {
     }
   };
 
+  // A session link may request Capture even when the signed-in nurse is only a
+  // participant. Keep the session visible in Station without granting writes.
+  useEffect(() => {
+    if (
+      currentMode === 'CAPTURE' &&
+      authUser &&
+      authorizedSessionId === currentSession.sessionId &&
+      currentSession.activeNurseUid !== authUser.uid
+    ) {
+      handleSelectMode('STATION', false);
+    }
+  }, [currentMode, authUser?.uid, authorizedSessionId, currentSession.sessionId, currentSession.activeNurseUid]);
+
   // Start Fresh Session (Explicitly generates a fresh session and guarantees Firestore write)
   const handleStartNewSession = async () => {
     if (isStartingSession) return;
@@ -762,6 +775,14 @@ export default function App() {
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">NurseFlow AI</h1>
           <p className="text-sm text-slate-600 dark:text-slate-400">승인된 간호사 계정으로 로그인해야 세션을 열 수 있습니다. QR 코드는 로그인이나 참여 승인을 대신하지 않습니다.</p>
           {authError && <p className="text-sm text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 p-2.5 rounded-xl border border-rose-200 dark:border-rose-900">{authError}</p>}
+          {authUser && (
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-3 text-left text-xs text-slate-700 dark:text-slate-200 space-y-1 break-all">
+              <p className="font-semibold">관리자 승인에 필요한 로그인 정보</p>
+              <p>Google 이메일: {authUser.email || '확인할 수 없음'}</p>
+              <p>Firebase UID: {authUser.uid}</p>
+              <p className="pt-1">관리자는 Firebase Authentication의 실제 로그인 행을 확인한 뒤 시연 계정을 승인해야 합니다. 승인 전에는 세션과 기록에 접근할 수 없습니다.</p>
+            </div>
+          )}
           <div className="pt-2 flex flex-col gap-2">
             {authUser ? (
               <button className="w-full rounded-xl bg-slate-800 dark:bg-slate-700 px-5 py-2.5 text-white font-medium text-xs hover:bg-slate-700 transition" onClick={() => signOutNurse()}>다른 계정으로 로그인</button>
@@ -964,7 +985,8 @@ export default function App() {
         />
       )}
 
-      {currentMode === 'STATION' && (
+      {(currentMode === 'STATION' ||
+        (currentMode === 'CAPTURE' && currentSession.activeNurseUid !== authUser.uid)) && (
         <StationView
           nurse={nurse}
           canWrite={currentSession.activeNurseUid === authUser.uid && currentSession.status === 'ACTIVE'}
@@ -978,6 +1000,7 @@ export default function App() {
           stationScrollTarget={stationScrollTarget}
           onClearScrollTarget={() => setStationScrollTarget(null)}
           onStartNewSession={handleStartNewSession}
+          onOpenSession={handleSwitchSession}
           onUpdateDraft={handleUpdateDraft}
           onOpenEmrModal={() => setIsEmrModalOpen(true)}
           isEmrModalOpen={isEmrModalOpen}
@@ -996,18 +1019,13 @@ export default function App() {
           onSimulateEvent={handleTriggerEvent}
         />
       )}
-      {currentMode === 'STATION' && authorizedSessionId === currentSession.sessionId && (
+      {currentMode === 'STATION' && currentSession.activeNurseUid === authUser.uid && authorizedSessionId === currentSession.sessionId && (
         <button className="hidden md:flex fixed bottom-5 left-5 z-40 rounded-xl bg-teal-700 px-4 py-2 text-sm font-bold text-white shadow-lg" onClick={() => setIsHandoffOpen(true)}>간호사 교대 관리</button>
       )}
       {isHandoffOpen && authUser && (
         <HandoffPanel session={currentSession} currentUid={authUser.uid} onUpdated={setCurrentSession} onClose={() => setIsHandoffOpen(false)} />
       )}
 
-      {currentMode === 'CAPTURE' && currentSession.activeNurseUid !== authUser.uid && (
-        <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6 text-white text-center">
-          <div><h2 className="text-xl font-bold">교대된 세션</h2><p className="mt-2 text-sm">현재 담당 간호사가 아니므로 새 기록을 작성할 수 없습니다. Station에서 기록은 계속 볼 수 있습니다.</p></div>
-        </div>
-      )}
       {currentMode === 'CAPTURE' && currentSession.activeNurseUid === authUser.uid && (
         <CaptureView
           nurse={nurse}

@@ -17,6 +17,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { StorageService } from '../services/storageService';
+import { auth } from '../services/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface FirebaseGuideModalProps {
@@ -40,7 +41,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
     }
   };
 
-  const deployedRules = '현재 실제 게시 규칙은 주요 컬렉션의 공개 읽기와 인증 우회 쓰기를 허용합니다. 이 화면의 안내를 게시된 규칙 원문으로 사용하지 마세요. 작업용 사본의 firestore.rules는 기존 세션의 UID 매핑, 두 기기 로그인, 권한 테스트를 마친 후 별도 승인으로 게시해야 합니다.';
+  const deployedRules = '현재 게시된 규칙은 Google 로그인과 관리자 승인된 시연 계정을 확인합니다. 세션 기록은 승인된 참여자만 읽을 수 있고, 새 간호 행위는 현재 담당 계정만 작성할 수 있습니다. 간호사 승인 프로필은 앱에서 직접 변경할 수 없습니다.';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
@@ -58,7 +59,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  실시간 연동 활성화 (ONLINE)
+                  원본 DB 연결 구성
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -87,7 +88,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
               <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
                 Google AI Studio를 통해 프로비저닝된 Cloud Firestore 데이터베이스와 연결되었습니다.
                 이제 <strong>PC 노트북(Station)</strong>과 <strong>아이폰(Capture)</strong>이 서로 다른 물리적 기기에서도
-                1초 미만의 지연 시간으로 이벤트를 실시간 공유합니다.
+                동일한 승인 세션에 연결하면 이벤트를 실시간으로 공유합니다. 실제 지연 시간은 네트워크 상태에 따라 달라집니다.
               </p>
             </div>
           </div>
@@ -119,7 +120,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
               <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                 <span className="text-slate-400 block text-[10px]">인증 계정 (Nurse Auth)</span>
                 <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                  yang.rn@hospital.mock
+                  {auth.currentUser?.email || '로그인 계정 확인 중'}
                 </span>
               </div>
               <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
@@ -147,13 +148,13 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
               <div className="flex-1 p-2 bg-white dark:bg-slate-900 rounded-lg border border-teal-500/30">
                 <Database className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
                 <span className="font-bold text-teal-600 dark:text-teal-400 block">Cloud Firestore</span>
-                <span className="text-[10px] text-slate-400">Append-Only 영구 로그</span>
+                <span className="text-[10px] text-slate-400">수정 불가 이벤트 로그</span>
               </div>
               <div className="text-slate-400 font-mono text-xs">➔ onSnapshot (실시간) ➔</div>
               <div className="flex-1 p-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
                 <Monitor className="w-4 h-4 text-teal-500 mx-auto mb-1" />
                 <span className="font-bold block">노트북 Station</span>
-                <span className="text-[10px] text-slate-400">타임라인·AI기록·EMR</span>
+                <span className="text-[10px] text-slate-400">타임라인·AI기록·Mock EMR</span>
               </div>
             </div>
           </div>
@@ -163,7 +164,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 text-xs">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                보안 규칙 전환 안내
+                현재 접근 제어
               </h4>
             </div>
             <pre className="p-3 bg-slate-950 text-slate-300 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 leading-relaxed max-h-48">
@@ -175,7 +176,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
         {/* Modal Footer */}
         <div className="sticky bottom-0 bg-slate-50 dark:bg-slate-950 px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between z-10">
           <span className="text-[11px] text-slate-500">
-            기존 로컬 시연 기록 및 EMR 전송 이력은 영구 보존됩니다.
+            새 세션을 시작해도 기존 세션과 Mock EMR 기록은 삭제되지 않습니다.
           </span>
           <button
             type="button"

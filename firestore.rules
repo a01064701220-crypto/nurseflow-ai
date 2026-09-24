@@ -16,7 +16,8 @@ service cloud.firestore {
     function approvedNurse() {
       return signedIn()
         && exists(nursePath(request.auth.uid))
-        && get(nursePath(request.auth.uid)).data.approved == true;
+        && get(nursePath(request.auth.uid)).data.approved == true
+        && get(nursePath(request.auth.uid)).data.email == request.auth.token.email;
     }
 
     function sessionMember(sessionId) {
@@ -67,11 +68,27 @@ service cloud.firestore {
           || (request.auth.uid == resource.data.ownerUid
             && request.auth.uid in request.resource.data.participantUids
             && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['participantUids', 'lastSyncAt']))
+              .hasOnly(['participantUids', 'lastSyncAt'])
+            && request.resource.data.participantUids is list
+            && request.resource.data.participantUids.size() == resource.data.participantUids.size() + 1
+            && request.resource.data.participantUids == resource.data.participantUids.concat([
+              request.resource.data.participantUids[resource.data.participantUids.size()]
+            ])
+            && exists(nursePath(request.resource.data.participantUids[resource.data.participantUids.size()]))
+            && get(nursePath(request.resource.data.participantUids[resource.data.participantUids.size()])).data.approved == true)
           || (activeNurse(sessionId)
             && request.resource.data.activeNurseUid in resource.data.participantUids
+            && request.resource.data.activeNurseUid != request.auth.uid
+            && exists(nursePath(request.resource.data.activeNurseUid))
+            && get(nursePath(request.resource.data.activeNurseUid)).data.approved == true
+            && request.resource.data.handoffHistory is list
+            && request.resource.data.handoffHistory == resource.data.get('handoffHistory', []).concat([{
+              'fromUid': request.auth.uid,
+              'toUid': request.resource.data.activeNurseUid,
+              'at': request.resource.data.lastSyncAt
+            }])
             && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['activeNurseUid', 'lastSyncAt']))
+              .hasOnly(['activeNurseUid', 'handoffHistory', 'lastSyncAt']))
         );
       allow delete: if false;
     }

@@ -56,3 +56,80 @@
   border-radius: 0.75rem !important;
 }
 
+/* Capture keeps a dark HUD by default, but its light setting must change the
+   actual work surface as well as the theme button. Keep camera/modal overlays
+   untouched so clinical confirmation screens retain their contrast. */
+[data-capture-theme="light"] {
+  background: #f8fafc;
+  color: #0f172a;
+}
+[data-capture-theme="light"] > header {
+  background: rgb(255 255 255 / 96%);
+  border-color: #cbd5e1;
+}
+[data-capture-theme="light"] > header span[class~="text-white"] {
+  color: #0f172a;
+}
+[data-capture-theme="light"] > header [class~="bg-slate-800"] {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+[data-capture-theme="light"] > header [class~="text-slate-100"] {
+  color: #0f172a;
+}
+[data-capture-theme="light"] > main [class~="bg-slate-950"],
+[data-capture-theme="light"] > main [class~="bg-slate-900"],
+[data-capture-theme="light"] > main [class~="bg-slate-900/60"],
+[data-capture-theme="light"] > main [class~="bg-slate-800/80"],
+[data-capture-theme="light"] > main [class~="bg-slate-800/60"],
+[data-capture-theme="light"] > main [class~="bg-slate-800"] {
+  background: #fff;
+}
+[data-capture-theme="light"] > main [class~="border-slate-800"],
+[data-capture-theme="light"] > main [class~="border-slate-700"],
+[data-capture-theme="light"] > main [class~="border-slate-700/60"],
+[data-capture-theme="light"] > main [class~="border-slate-700/80"] {
+  border-color: #cbd5e1;
+}
+[data-capture-theme="light"] > main :not(button)[class~="text-white"],
+[data-capture-theme="light"] > main [class~="text-slate-200"],
+[data-capture-theme="light"] > main [class~="text-slate-300"] {
+  color: #0f172a;
+}
+[data-capture-theme="light"] > main [class~="text-slate-400"],
+[data-capture-theme="light"] > main [class~="text-slate-500"] {
+  color: #475569;
+}
+[data-capture-theme="light"] > main [class~="text-teal-300"],
+[data-capture-theme="light"] > main [class~="text-teal-400"] {
+  color: #0f766e;
+}
+[data-capture-theme="light"] > main [class~="text-sky-300"] {
+  color: #0369a1;
+}
+[data-capture-theme="light"] > main :not(button)[class~="text-purple-300"] {
+  color: #7e22ce;
+}
+[data-capture-theme="light"] > main [class~="bg-teal-950"],
+[data-capture-theme="light"] > main [class~="bg-teal-950/80"],
+[data-capture-theme="light"] > main [class~="bg-purple-950"] {
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+[data-capture-theme="light"] > main [class~="bg-emerald-950/40"],
+[data-capture-theme="light"] > main [class~="bg-emerald-950/20"] {
+  background: #ecfdf5;
+  color: #065f46;
+}
+[data-capture-theme="light"] > main [class~="bg-purple-950/40"],
+[data-capture-theme="light"] > main [class~="bg-purple-950/20"] {
+  background: #faf5ff;
+  color: #6b21a8;
+}
+[data-capture-theme="light"] > main [class~="bg-gradient-to-br"][class~="from-purple-950/70"] {
+  background: linear-gradient(135deg, #f5f3ff, #fff, #f0fdfa);
+}
+[data-capture-theme="light"] > main [class~="bg-gradient-to-br"][class~="from-teal-900/40"] {
+  background: linear-gradient(135deg, #f0fdfa, #fff);
+}

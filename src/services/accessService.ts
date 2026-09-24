@@ -8,6 +8,11 @@ export async function loadApprovedNurse(): Promise<Nurse> {
   if (!profile.exists() || profile.data().approved !== true) {
     throw new Error('승인된 간호사 계정이 아닙니다. 관리자에게 접근 등록을 요청하세요.');
   }
+  const registeredEmail = profile.data().email;
+  if (!user.email || typeof registeredEmail !== 'string'
+    || registeredEmail.toLowerCase() !== user.email.toLowerCase()) {
+    throw new Error('로그인 이메일과 승인된 계정 정보가 일치하지 않습니다. 관리자에게 확인을 요청하세요.');
+  }
   return { ...(profile.data() as Nurse), uid: user.uid };
 }
 

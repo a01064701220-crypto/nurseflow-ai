@@ -33,10 +33,11 @@ export interface Nurse {
   approved?: boolean;
   nurseId: string; // e.g. "NURSE-2026-001"
   nurseName: string; // e.g. "양두영"
-  licenseNumber: string; // e.g. "RN-89412"
+  licenseNumber?: string; // Only when a real license has been verified.
   department: string; // e.g. "내과 병동 5W"
   shift: 'DAY' | 'EVENING' | 'NIGHT';
-  role: 'PRIMARY_RN' | 'CHARGE_RN';
+  role: 'PRIMARY_RN' | 'CHARGE_RN' | 'DEMO_OPERATOR';
+  accountType?: 'LICENSED_NURSE' | 'EDUCATIONAL_DEMO';
   email?: string;
 }
 

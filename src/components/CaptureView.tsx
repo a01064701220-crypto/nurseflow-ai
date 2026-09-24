@@ -22,6 +22,7 @@ import {
   Sparkles,
   Cpu,
   Eye,
+  Menu,
 } from 'lucide-react';
 import {
   Patient,
@@ -250,83 +251,75 @@ export const CaptureView: React.FC<CaptureViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-between pb-12">
+    <div data-capture-theme={isDarkMode ? 'dark' : 'light'} className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-between pb-12">
       {/* Mobile Top App Bar */}
-      <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+      <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="w-8 h-8 shrink-0 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
             <Smartphone className="w-4 h-4" />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm tracking-tight text-white">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="font-extrabold text-sm tracking-tight text-white truncate whitespace-nowrap min-w-0">
                 NurseFlow Capture
               </span>
-              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 font-bold border border-purple-800">
+              <span className="hidden sm:inline text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 font-bold border border-purple-800 whitespace-nowrap">
                 웨어러블 시뮬레이터
               </span>
             </div>
-            <div className="text-[10px] text-slate-400 flex items-center gap-1">
+            <div className="text-[10px] text-slate-400 flex items-center gap-1 whitespace-nowrap">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-emerald-300 font-medium">Station 실시간 연동</span>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 shrink-0">
           {/* Hands-Free Demo Launch Button */}
           <button
             type="button"
             onClick={() => setIsHandsFreeOpen(true)}
-            className="text-xs px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-950 to-teal-950 hover:from-purple-900 hover:to-teal-900 border border-purple-600/70 text-purple-200 font-bold flex items-center gap-1.5 transition shadow-sm"
+            className="w-8 h-8 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-r from-purple-950 to-teal-950 hover:from-purple-900 hover:to-teal-900 border border-purple-600/70 text-purple-200 font-bold flex items-center justify-center gap-1.5 transition shadow-sm"
             title="웨어러블 대체용 AI 핸즈프리 시연 시작"
           >
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span className="text-[11px]">핸즈프리</span>
+            <span className="hidden sm:inline text-[11px] whitespace-nowrap">핸즈프리</span>
           </button>
-
-          {/* Diagnostics Button */}
-          {onOpenDiagnostics && (
-            <button
-              type="button"
-              onClick={onOpenDiagnostics}
-              className="text-xs px-2 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-900 border border-teal-800 text-teal-300 font-medium flex items-center gap-1 transition"
-              title="시스템 및 동기화 진단"
-            >
-              <Terminal className="w-3.5 h-3.5 text-teal-400" />
-              <span className="text-[11px]">진단</span>
-            </button>
-          )}
 
           {/* Switch to PC Station */}
           <button
             type="button"
             onClick={() => onSwitchMode('STATION')}
-            className="text-xs px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium flex items-center gap-1 transition"
+            className="w-8 h-8 sm:w-auto sm:px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium flex items-center justify-center gap-1 transition"
             title="PC 간호사 스테이션 화면으로 전환"
           >
             <Monitor className="w-3.5 h-3.5 text-teal-400" />
-            <span className="text-[11px]">Station</span>
-          </button>
-
-          {/* Switch to Portal */}
-          <button
-            type="button"
-            onClick={() => onSwitchMode('PORTAL')}
-            className="text-xs px-2 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
-            title="포털"
-          >
-            포털
+            <span className="hidden sm:inline text-[11px] whitespace-nowrap">Station</span>
           </button>
 
           {/* Theme toggle */}
           <button
             type="button"
             onClick={onToggleDarkMode}
-            className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+            className="w-8 h-8 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+            title={isDarkMode ? '라이트 모드' : '다크 모드'}
+            aria-label={isDarkMode ? '라이트 모드' : '다크 모드'}
           >
             {isDarkMode ? '☀️' : '🌙'}
           </button>
+          <details className="relative">
+            <summary aria-label="Capture 더보기 메뉴" className="list-none w-8 h-8 rounded-xl bg-slate-800 text-slate-200 border border-slate-700 flex items-center justify-center cursor-pointer [&::-webkit-details-marker]:hidden">
+              <Menu className="w-4 h-4" />
+            </summary>
+            <div className="absolute right-0 top-10 w-40 rounded-xl bg-slate-800 border border-slate-600 p-1.5 shadow-xl flex flex-col gap-1">
+              {onOpenDiagnostics && (
+                <button type="button" onClick={onOpenDiagnostics} className="rounded-lg px-3 py-2 text-left text-xs text-slate-100 hover:bg-slate-700 flex items-center gap-2 whitespace-nowrap">
+                  <Terminal className="w-4 h-4" /> 진단
+                </button>
+              )}
+              <button type="button" onClick={() => onSwitchMode('PORTAL')} className="rounded-lg px-3 py-2 text-left text-xs text-slate-100 hover:bg-slate-700 whitespace-nowrap">시작 화면</button>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -862,7 +855,7 @@ export const CaptureView: React.FC<CaptureViewProps> = ({
                   새 시연 세션을 시작할까요?
                 </h3>
                 <p className="text-xs text-slate-400">
-                  현재 세션의 실시간 이벤트는 안전하게 보존되며 새 세션이 발급됩니다.
+                  기존 세션과 기록은 보존되어 기록원에서 조회할 수 있습니다. 새 세션에는 새 기록만 쌓입니다.
                 </p>
               </div>
             </div>
