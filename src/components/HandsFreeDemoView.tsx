@@ -64,6 +64,46 @@ interface HandsFreeDemoViewProps {
     fiveRightsVerified?: boolean
   ) => Promise<void>;
   onSaveVoiceNote: (transcript: string, linkedStep?: string, clinicalFindings?: any) => void;
+  onEndDemo?: () => void;
+}
+
+// Voice Command Classifier: Prioritizes demo termination commands while protecting clinical medication commands
+export function isDemoExitVoiceCommand(transcript: string): boolean {
+  if (!transcript) return false;
+  const text = transcript.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!text) return false;
+
+  // 1. Explicit Clinical Action Guard: "투여 종료", "항생제 투여 종료" etc. are Step 5 clinical events, NOT demo exits!
+  if (
+    text.includes('투여 종료') ||
+    text.includes('투여종료') ||
+    text.includes('항생제 투여') ||
+    text.includes('항생제투여') ||
+    text.includes('약물 투여') ||
+    text.includes('약물투여') ||
+    text.includes('점적 투여') ||
+    text.includes('주입 종료') ||
+    text.includes('주입종료') ||
+    text.includes('투약 종료') ||
+    text.includes('투약종료')
+  ) {
+    return false;
+  }
+
+  // 2. Recognize "시연 종료" or "핸즈프리 종료" with Korean spacing flexibility
+  const hasShiyeonEnd =
+    /시연\s*종료/.test(text) ||
+    text.includes('시연끝') ||
+    text.includes('시연 끝') ||
+    text.includes('시연 그만');
+
+  const hasHandsFreeEnd =
+    /핸즈프리\s*종료/.test(text) ||
+    text.includes('핸즈프리끝') ||
+    text.includes('핸즈프리 끝') ||
+    text.includes('핸즈프리 그만');
+
+  return hasShiyeonEnd || hasHandsFreeEnd;
 }
 
 // Web Audio API tactile audio chimes
@@ -112,10 +152,20 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
   onTriggerEvent,
   onConfirmVerification,
   onSaveVoiceNote,
+  onEndDemo,
 }) => {
   // Operating mode: 'SIMULTANEOUS' (camera + mic) vs 'AUTO_SWITCH' (step-aware alternation)
   const [operatingMode, setOperatingMode] = useState<'SIMULTANEOUS' | 'AUTO_SWITCH'>('SIMULTANEOUS');
   const [isDiagModalOpen, setIsDiagModalOpen] = useState(false);
+
+  // Demo exit and confirmation state
+  const [isExitConfirmOpen, setIsExitConfirmOpen] = useState(false);
+  const [exitFeedbackMessage, setExitFeedbackMessage] = useState<string | null>(null);
+  const [isProcessingExit, setIsProcessingExit] = useState(false);
+  const isExitingDemoRef = useRef(false);
+  const lastExitCommandTimeRef = useRef(0);
+  const isExitConfirmOpenRef = useRef(false);
+  isExitConfirmOpenRef.current = isExitConfirmOpen;
 
   // Camera & hardware states
   const [cameraState, setCameraState] = useState<'IDLE' | 'INITIALIZING' | 'STREAMING' | 'PAUSED' | 'ERROR'>('IDLE');
@@ -193,6 +243,26 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
   else if (!hasInfusionStarted) currentTargetStep = 4;
   else if (!hasInfusionEnded) currentTargetStep = 5;
   else currentTargetStep = 6;
+
+  const completedStepsCount = [
+    isPatientVerified,
+    isMedicationVerified,
+    isIvSiteAssessed,
+    hasInfusionStarted,
+    hasInfusionEnded,
+  ].filter(Boolean).length;
+
+  const isAllStepsCompleted = completedStepsCount === 5;
+
+  const incompleteSteps: string[] = [];
+  if (!isPatientVerified) incompleteSteps.push('1단계: 환자 손목밴드 QR 확인');
+  if (!isMedicationVerified) incompleteSteps.push('2단계: 처방 약물 1D 바코드 확인');
+  if (!isIvSiteAssessed) incompleteSteps.push('3단계: IV Site 정맥 주입 부위 사정');
+  if (!hasInfusionStarted) incompleteSteps.push('4단계: 점적 투여 시작');
+  if (!hasInfusionEnded) incompleteSteps.push('5단계: 점적 투여 종료');
+
+  const requestDemoExitRef = useRef<(source?: 'VOICE' | 'BUTTON') => void>(() => {});
+  const executeExitFlowRef = useRef<(isAllComplete: boolean) => Promise<void>>(async () => {});
 
   const currentTargetFormat: 'QR_CODE' | 'CODE_128' | 'NONE' =
     currentTargetStep === 1 ? 'QR_CODE' : currentTargetStep === 2 ? 'CODE_128' : 'NONE';
@@ -497,6 +567,42 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
 
         const text = (finalTranscript || interimTranscript).trim();
         if (text) {
+          // A. If Exit Confirmation Dialog is open, listen for confirmation or cancellation
+          if (isExitConfirmOpenRef.current) {
+            const lower = text.toLowerCase();
+            if (
+              lower.includes('종료') ||
+              lower.includes('확인') ||
+              lower.includes('네') ||
+              lower.includes('시연 종료') ||
+              lower.includes('핸즈프리 종료') ||
+              lower.includes('끝내')
+            ) {
+              console.log('[HandsFree Speech] Exit confirmed by voice:', text);
+              executeExitFlowRef.current(false);
+              return;
+            }
+            if (
+              lower.includes('취소') ||
+              lower.includes('계속') ||
+              lower.includes('아니') ||
+              lower.includes('유지')
+            ) {
+              console.log('[HandsFree Speech] Exit confirmation cancelled by voice:', text);
+              setIsExitConfirmOpen(false);
+              return;
+            }
+          }
+
+          // B. Classify Exit Command FIRST before any clinical nursing finding
+          if (isDemoExitVoiceCommand(text)) {
+            console.log('[HandsFree Speech] Demo exit command detected:', text);
+            setCurrentTranscript('');
+            requestDemoExitRef.current('VOICE');
+            return;
+          }
+
+          // C. Normal Clinical Speech Handling
           setCurrentTranscript(text);
           if (finalTranscript) {
             setRecentTranscripts((prev) => [finalTranscript, ...prev.slice(0, 4)]);
@@ -541,12 +647,91 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
         recognitionRef.current.onend = null;
         recognitionRef.current.onerror = null;
         recognitionRef.current.onresult = null;
+        recognitionRef.current.abort();
         recognitionRef.current.stop();
       } catch (_) {}
       recognitionRef.current = null;
     }
     setIsListening(false);
   };
+
+  // Demo Exit Implementation
+  const executeExitFlow = async (isAllComplete: boolean) => {
+    if (isExitingDemoRef.current) return;
+    isExitingDemoRef.current = true;
+    setIsProcessingExit(true);
+    setIsExitConfirmOpen(false);
+
+    // 3. 진행 중인 Firestore 저장 작업 확인
+    if (saveLockRef.current || isSaving) {
+      setExitFeedbackMessage('진행 중인 Firestore 기록 저장 결과를 확인하고 있습니다...');
+      let waitIterations = 0;
+      while ((saveLockRef.current || isSaving) && waitIterations < 25) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        waitIterations++;
+      }
+      if (firestoreSaveStatus === 'FAILED') {
+        setExitFeedbackMessage('⚠️ 진행 중이던 Firestore 저장에 실패했습니다. 시연 종료를 보류합니다.');
+        isExitingDemoRef.current = false;
+        setIsProcessingExit(false);
+        return;
+      }
+    }
+
+    const message = isAllComplete
+      ? '핸즈프리 시연을 종료합니다'
+      : '핸즈프리 시연을 종료하고 간호 Station으로 이동합니다';
+    setExitFeedbackMessage(message);
+
+    // 오디오 피드백 및 음성 TTS (지원 브라우저)
+    try {
+      playScanChime(true);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance('핸즈프리 시연을 종료합니다');
+        utterance.lang = 'ko-KR';
+        utterance.rate = 1.0;
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch (_) {}
+
+    // 4. 카메라 스트림, 음성 인식 및 QR/바코드 디코딩 루프 정상 정리 (iPhone Safari 리소스 완전 해제)
+    stopCamera(true);
+    stopSpeechRecognition();
+
+    // 6. 모바일 Station 화면으로 이동하고 '주요 간호 작업 바로가기' 영역으로 이동
+    setTimeout(() => {
+      setIsProcessingExit(false);
+      setExitFeedbackMessage(null);
+      isExitingDemoRef.current = false;
+      if (onEndDemo) {
+        onEndDemo();
+      } else {
+        onClose();
+      }
+    }, 750);
+  };
+
+  const requestDemoExit = useCallback((source: 'VOICE' | 'BUTTON' = 'BUTTON') => {
+    const now = Date.now();
+    if (isExitingDemoRef.current || now - lastExitCommandTimeRef.current < 1500) {
+      return;
+    }
+    lastExitCommandTimeRef.current = now;
+
+    console.log(`[HandsFree] Exit requested via ${source}. Completed: ${completedStepsCount}/5, isAllDone: ${isAllStepsCompleted}`);
+
+    if (isAllStepsCompleted) {
+      // 5단계 완료 시 피드백 후 바로 자동 종료
+      executeExitFlow(true);
+    } else {
+      // 미완료 단계가 있을 시 사용자 확인 대화창 표시
+      setIsExitConfirmOpen(true);
+    }
+  }, [isAllStepsCompleted, completedStepsCount]);
+
+  requestDemoExitRef.current = requestDemoExit;
+  executeExitFlowRef.current = executeExitFlow;
 
   // 4. Autonomous Code Detection & Verification Dispatcher
   const handleAutonomousCode = (decodedText: string, format: string) => {
@@ -677,6 +862,67 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
   // 6. Voice Intent & Note Handling
   const handleVoiceIntent = (phrase: string) => {
     console.log('[HandsFree Voice Intent Heard]:', phrase);
+
+    // Rule 3: Guard exit command again if triggered via finalTranscript
+    if (isDemoExitVoiceCommand(phrase)) {
+      requestDemoExitRef.current('VOICE');
+      return;
+    }
+
+    // Rule 4: Clinical medication/infusion completion (Step 5)
+    // "투여 종료", "항생제 투여 종료"는 기존 간호 행위로 처리하며 시연 종료로 오인하지 않는다.
+    const isInfusionEndCommand =
+      (phrase.includes('투여') && phrase.includes('종료')) ||
+      phrase.includes('항생제 종료') ||
+      phrase.includes('항생제투여종료') ||
+      phrase.includes('약물 투여 종료') ||
+      phrase.includes('주입 종료') ||
+      phrase.includes('투약 종료');
+
+    if (isInfusionEndCommand) {
+      console.log('[HandsFree Voice] Clinical medication end command (Step 5):', phrase);
+      if (currentTargetStep === 5 || hasInfusionStarted) {
+        onTriggerEvent('MEDICATION_END', 'Voice Confirmation', {
+          source: 'VOICE_AI_CONFIRMED',
+          transcript: phrase,
+        }).then((res) => {
+          if (res.success) {
+            setSaveMessage('항생제 투여 종료 완료 기록 (5/5)');
+          } else {
+            setSaveMessage(`저장 실패: ${res.message}`);
+          }
+        });
+      } else {
+        onSaveVoiceNote(phrase, 'INFUSION_END', {});
+        setSaveMessage(`투여 종료 소견 기록: "${phrase.slice(0, 20)}..."`);
+      }
+      return;
+    }
+
+    // Clinical medication/infusion start (Step 4)
+    const isInfusionStartCommand =
+      (phrase.includes('투여') && phrase.includes('시작')) ||
+      phrase.includes('항생제 시작') ||
+      phrase.includes('항생제투여시작') ||
+      phrase.includes('약물 투여 시작') ||
+      phrase.includes('주입 시작');
+
+    if (isInfusionStartCommand && currentTargetStep === 4) {
+      console.log('[HandsFree Voice] Clinical medication start command (Step 4):', phrase);
+      onTriggerEvent('MEDICATION_START', 'Voice Confirmation', {
+        source: 'VOICE_AI_CONFIRMED',
+        transcript: phrase,
+      }).then((res) => {
+        if (res.success) {
+          setSaveMessage('항생제 투여 시작 완료 기록 (4/5)');
+        } else {
+          setSaveMessage(`저장 실패: ${res.message}`);
+        }
+      });
+      return;
+    }
+
+    // Clinical IV site assessment (Step 3)
     const isIvRelated =
       phrase.includes('정맥') ||
       phrase.includes('발적') ||
@@ -809,21 +1055,28 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
             title="하드웨어 및 브라우저 호환성 진단"
           >
             <Terminal className="w-3 h-3 text-purple-400" />
-            <span>진단 도구</span>
+            <span>진단</span>
+          </button>
+
+          {/* Manual Exit Button: Always accessible if voice is unavailable or noisy */}
+          <button
+            type="button"
+            onClick={() => requestDemoExit('BUTTON')}
+            className="text-[10px] px-2.5 py-1 rounded-xl bg-rose-950/90 hover:bg-rose-900 border border-rose-700 text-rose-200 font-bold flex items-center gap-1 transition shadow-xs"
+            title="웨어러블 핸즈프리 시연 종료"
+          >
+            <Square className="w-3 h-3 text-rose-400 fill-rose-400/40" />
+            <span>시연 종료</span>
           </button>
 
           {/* Close / Exit Demo */}
           <button
             type="button"
-            onClick={() => {
-              stopCamera(true);
-              stopSpeechRecognition();
-              onClose();
-            }}
+            onClick={() => requestDemoExit('BUTTON')}
             className="p-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition"
             title="시연 모드 종료"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -1320,16 +1573,119 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
         )}
 
         {currentTargetStep === 6 && (
-          <div className="p-2.5 rounded-xl bg-teal-950/80 border border-teal-600/60 text-center text-xs text-teal-200">
-            <div className="font-bold flex items-center justify-center gap-1 text-teal-300">
-              <CheckCircle2 className="w-4 h-4" /> 5단계 현장 간호 완수
+          <div className="p-3 rounded-2xl bg-teal-950/90 border border-teal-500/70 text-center space-y-2 shadow-lg">
+            <div className="font-extrabold flex items-center justify-center gap-1.5 text-teal-300 text-xs sm:text-sm">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>5단계 현장 간호 완수</span>
             </div>
-            <span className="text-[10px] text-slate-300 block mt-0.5">
-              Station 화면에서 Gemini AI 간호기록 자동 작성 및 승인 대기 중입니다.
-            </span>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              "시연 종료"라고 말씀하시거나 아래 버튼을 누르면 PC Station 간호기록 관리 화면으로 이동합니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => requestDemoExit('BUTTON')}
+              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-teal-900/40 transition active:scale-98"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>핸즈프리 시연 종료 및 Station 이동</span>
+            </button>
+          </div>
+        )}
+
+        {/* Voice Command Hint & Manual Exit Option */}
+        {currentTargetStep < 6 && (
+          <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400">
+            <div className="flex items-center gap-1 text-purple-300 font-medium truncate pr-2">
+              <Mic className="w-3 h-3 text-purple-400 shrink-0" />
+              <span className="truncate">음성 명령: "시연 종료" 또는 "핸즈프리 종료"</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => requestDemoExit('BUTTON')}
+              className="text-rose-400 hover:text-rose-300 font-semibold underline underline-offset-2 shrink-0 transition"
+            >
+              수동 시연 종료
+            </button>
           </div>
         )}
       </footer>
+
+      {/* Incomplete Steps Exit Confirmation Modal (요구사항: 미완료 단계 확인 및 안전 종료) */}
+      {isExitConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-amber-500/60 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6 text-amber-400" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="font-extrabold text-sm sm:text-base text-white">
+                아직 완료되지 않은 단계가 있습니다.
+              </h3>
+              <p className="text-xs text-amber-300 font-bold">
+                시연을 종료할까요?
+              </p>
+              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                현재 {completedStepsCount}/5 단계가 완료되었습니다. 시연을 종료해도 지금까지 수집된 실시간 이벤트와 세션 ID(#{currentSession.sessionNumber})는 안전하게 보존됩니다.
+              </p>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-left space-y-1">
+              <div className="text-slate-400 font-medium">미완료 간호 단계:</div>
+              {incompleteSteps.map((label, idx) => (
+                <div key={idx} className="text-amber-200 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsExitConfirmOpen(false)}
+                className="flex-1 py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
+              >
+                계속 진행
+              </button>
+              <button
+                type="button"
+                onClick={() => executeExitFlow(false)}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-lg shadow-rose-900/40"
+              >
+                시연 종료
+              </button>
+            </div>
+
+            <p className="text-[10px] text-slate-500">
+              마이크에 대고 "종료" 또는 "계속"이라고 말씀하셔도 처리됩니다.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Exit Feedback & Hardware Cleanup Overlay (요구사항: 피드백 후 자동 종료 및 Station 이동) */}
+      {(exitFeedbackMessage || isProcessingExit) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-teal-500/60 rounded-3xl max-w-sm w-full p-6 text-center space-y-3.5 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-teal-500/20 text-teal-300 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-8 h-8 text-teal-400 animate-bounce" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-extrabold text-base text-white">
+                {exitFeedbackMessage || '핸즈프리 시연을 종료합니다'}
+              </h3>
+              <p className="text-xs text-slate-300">
+                카메라·마이크를 정상 해제하고 Station 주요 간호 작업으로 이동 중...
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-1.5 text-teal-400 text-[11px] font-mono pt-1">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>미디어 트랙 및 센서 자원 정리 중</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hardware Diagnostics Modal Inspector with Live Telemetry */}
       <HandsFreeDiagnosticsModal

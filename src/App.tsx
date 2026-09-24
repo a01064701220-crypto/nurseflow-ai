@@ -32,16 +32,16 @@ import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { auth, signInNurse, signOutNurse } from './services/firebase';
 import { loadApprovedNurse } from './services/accessService';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { AlertTriangle, RefreshCw, Smartphone, QrCode } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Smartphone, QrCode, HeartPulse, RotateCcw } from 'lucide-react';
 
 export default function App() {
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      return (
-        localStorage.getItem('nurseflow_theme') === 'dark' ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches
-      );
+      const savedTheme = localStorage.getItem('nurseflow_theme');
+      if (savedTheme === 'dark') return true;
+      if (savedTheme === 'light') return false;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
     return false;
   });
@@ -135,6 +135,7 @@ export default function App() {
   // Session Connection Verification State (Specifically for Mobile Capture via QR)
   const [isVerifyingSession, setIsVerifyingSession] = useState<boolean>(false);
   const [sessionVerificationError, setSessionVerificationError] = useState<string | null>(null);
+  const [stationScrollTarget, setStationScrollTarget] = useState<string | null>(null);
 
   // Diagnostics & Listener Health Monitoring State
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
@@ -155,14 +156,17 @@ export default function App() {
   const [isFirebaseGuideOpen, setIsFirebaseGuideOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isTriggeringEvent, setIsTriggeringEvent] = useState<boolean>(false);
+  const [isStartingSession, setIsStartingSession] = useState<boolean>(false);
 
   // Theme Sync
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
+      document.documentElement.setAttribute('data-theme', 'dark');
       localStorage.setItem('nurseflow_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.documentElement.setAttribute('data-theme', 'light');
       localStorage.setItem('nurseflow_theme', 'light');
     }
   }, [isDarkMode]);
@@ -248,9 +252,23 @@ export default function App() {
             setEvents(result.events || []);
             setAuthorizedSessionId(result.session.sessionId);
             showSessionRecords(result.session.sessionId);
+          } else {
+            // Check if user has an existing authorized session in Firestore
+            const userSessions = await StorageService.loadAllSessions();
+            if (userSessions.length > 0) {
+              const latest = userSessions[0];
+              const retryResult = await StorageService.verifyAndJoinSession(latest.sessionId);
+              if (retryResult.success && retryResult.session) {
+                setCurrentSession(retryResult.session);
+                setEvents(retryResult.events || []);
+                setAuthorizedSessionId(retryResult.session.sessionId);
+                showSessionRecords(retryResult.session.sessionId);
+              }
+            }
           }
-        } catch (e) {
+        } catch (e: any) {
           console.warn('No authorized session selected:', e);
+          setSessionVerificationError(e?.message || '세션 권한 확인 중 오류가 발생했습니다.');
         }
       }
       setSessionCheckComplete(true);
@@ -406,8 +424,15 @@ export default function App() {
   }, [currentSession.sessionId]);
 
   // Update URL & mode handler
-  const handleSelectMode = (mode: AppMode, rememberPreference: boolean = true) => {
+  const handleSelectMode = (
+    mode: AppMode,
+    rememberPreference: boolean = true,
+    targetElementId?: string
+  ) => {
     setCurrentMode(mode);
+    if (targetElementId) {
+      setStationScrollTarget(targetElementId);
+    }
     if (rememberPreference && mode !== 'PORTAL') {
       StorageService.setPreferredMode(mode);
     }
@@ -425,6 +450,8 @@ export default function App() {
 
   // Start Fresh Session (Explicitly generates a fresh session and guarantees Firestore write)
   const handleStartNewSession = async () => {
+    if (isStartingSession) return;
+    setIsStartingSession(true);
     try {
       const newSession = await StorageService.startNewSession();
       setAuthorizedSessionId(newSession.sessionId);
@@ -439,6 +466,9 @@ export default function App() {
       showToast(`새로운 클라우드 시연 세션 [${newSession.sessionId}]이 시작되었습니다.`);
     } catch (e: any) {
       showToast(`세션 시작 오류: ${e.message || e}`);
+      setSessionVerificationError(e?.message || '세션 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsStartingSession(false);
     }
   };
 
@@ -714,43 +744,143 @@ export default function App() {
   };
 
   if (!authReady) {
-    return <div className="min-h-screen flex items-center justify-center">로그인 상태를 확인하는 중입니다.</div>;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 p-6 gap-3">
+        <RefreshCw className="w-8 h-8 text-teal-600 animate-spin" />
+        <p className="text-sm font-medium">로그인 및 간호사 계정 상태를 확인하는 중입니다...</p>
+      </div>
+    );
   }
 
   if (!authUser || !accessReady) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
-        <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center space-y-4">
-          <h1 className="text-xl font-bold">NurseFlow AI</h1>
-          <p className="text-sm text-slate-600">승인된 간호사 계정으로 로그인해야 세션을 열 수 있습니다. QR 코드는 로그인이나 참여 승인을 대신하지 않습니다.</p>
-          {authError && <p className="text-sm text-rose-700">{authError}</p>}
-          {authUser ? (
-            <button className="rounded-lg bg-slate-800 px-5 py-2 text-white" onClick={() => signOutNurse()}>다른 계정으로 로그인</button>
-          ) : (
-            <button className="rounded-lg bg-teal-700 px-5 py-2 text-white" onClick={() => signInNurse().catch((e) => setAuthError(e.message))}>Google 계정으로 로그인</button>
-          )}
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-6 transition-colors">
+        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 text-center space-y-4 shadow-xl">
+          <div className="w-12 h-12 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-600 dark:text-teal-400 flex items-center justify-center mx-auto">
+            <HeartPulse className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white">NurseFlow AI</h1>
+          <p className="text-sm text-slate-600 dark:text-slate-400">승인된 간호사 계정으로 로그인해야 세션을 열 수 있습니다. QR 코드는 로그인이나 참여 승인을 대신하지 않습니다.</p>
+          {authError && <p className="text-sm text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 p-2.5 rounded-xl border border-rose-200 dark:border-rose-900">{authError}</p>}
+          <div className="pt-2 flex flex-col gap-2">
+            {authUser ? (
+              <button className="w-full rounded-xl bg-slate-800 dark:bg-slate-700 px-5 py-2.5 text-white font-medium text-xs hover:bg-slate-700 transition" onClick={() => signOutNurse()}>다른 계정으로 로그인</button>
+            ) : (
+              <button className="w-full rounded-xl bg-teal-600 hover:bg-teal-500 px-5 py-2.5 text-white font-bold text-xs shadow-md transition" onClick={() => signInNurse().catch((e) => setAuthError(e.message))}>Google 계정으로 로그인</button>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   if (currentMode !== 'PORTAL' && authorizedSessionId !== currentSession.sessionId) {
+    const isWaiting = !sessionCheckComplete || isStartingSession;
+
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
-        <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center space-y-4">
-          <h1 className="text-xl font-bold">세션 접근 확인</h1>
-          <p className="text-sm text-slate-600">{sessionCheckComplete ? (sessionVerificationError || '참여가 승인된 세션이 없습니다.') : '세션 권한을 확인하는 중입니다.'}</p>
-          {sessionCheckComplete && !new URLSearchParams(window.location.search).has('session') && (
-            <button className="rounded-lg bg-teal-700 px-5 py-2 text-white" onClick={handleStartNewSession}>새 시연 세션 시작</button>
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4 sm:p-6 transition-colors">
+        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 sm:p-8 text-center space-y-4 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-teal-50 dark:bg-teal-950/80 text-teal-600 dark:text-teal-400 flex items-center justify-center mx-auto border border-teal-200 dark:border-teal-800">
+            {isWaiting ? (
+              <RefreshCw className="w-7 h-7 animate-spin text-teal-600" />
+            ) : (
+              <AlertTriangle className="w-7 h-7 text-amber-500" />
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-white">
+              {isWaiting ? '세션 권한 확인 및 연결 중' : '세션 접근 확인'}
+            </h1>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              {isWaiting
+                ? (isStartingSession ? '새로운 클라우드 시연 세션을 생성하고 참여 승인을 진행하는 중입니다...' : 'Firestore 클라우드 세션 및 참여 권한을 조회하는 중입니다...')
+                : (sessionVerificationError || '참여가 승인된 세션이 없습니다.')}
+            </p>
+          </div>
+
+          {sessionVerificationError && !isWaiting && (
+            <div className="rounded-2xl border border-amber-300 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 p-3.5 text-left text-xs text-amber-900 dark:text-amber-200 leading-relaxed space-y-1">
+              <p className="font-semibold text-amber-950 dark:text-amber-100">보안 안내: QR 코드는 세션 식별용입니다.</p>
+              <p>QR 스캔만으로는 기록 열람 및 작성 권한이 부여되지 않습니다. 이미 등록된 간호사 계정이라도 Station의 [간호사 교대 관리]에서 해당 세션의 참여자(participantUids)로 승인되어야 모바일 Capture로 진입할 수 있습니다.</p>
+            </div>
           )}
-          <button className="rounded-lg border px-5 py-2" onClick={() => handleSelectMode('PORTAL')}>시작 화면</button>
+
+          <div className="pt-2 flex flex-col gap-2.5">
+            {!new URLSearchParams(window.location.search).has('session') && (
+              <button
+                type="button"
+                disabled={isWaiting}
+                onClick={handleStartNewSession}
+                className="w-full rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold py-2.5 px-4 text-xs flex items-center justify-center gap-2 shadow-md transition"
+              >
+                {isStartingSession ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>새 시연 세션 생성 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-4 h-4" />
+                    <span>새 시연 세션 시작</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {!isWaiting && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSessionCheckComplete(false);
+                  setSessionVerificationError(null);
+                  if (typeof window !== 'undefined') {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const sessionParam = urlParams.get('session');
+                    if (sessionParam) {
+                      StorageService.verifyAndJoinSession(sessionParam).then((res) => {
+                        setSessionCheckComplete(true);
+                        if (res.success && res.session) {
+                          setAuthorizedSessionId(res.session.sessionId);
+                          setCurrentSession(res.session);
+                        } else {
+                          setSessionVerificationError(res.error || '세션 연결 실패');
+                        }
+                      });
+                      return;
+                    }
+                  }
+                  StorageService.verifyAndJoinSession(currentSession.sessionId).then((res) => {
+                    setSessionCheckComplete(true);
+                    if (res.success && res.session) {
+                      setAuthorizedSessionId(res.session.sessionId);
+                      setCurrentSession(res.session);
+                    } else {
+                      setSessionVerificationError(res.error || '세션 연결 실패');
+                    }
+                  });
+                }}
+                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs py-2 px-4 hover:bg-slate-100 dark:hover:bg-slate-750 font-medium transition"
+              >
+                세션 권한 다시 확인
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="w-full rounded-xl border border-slate-200 dark:border-slate-800 text-xs py-2 px-4 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              onClick={() => handleSelectMode('PORTAL')}
+            >
+              시작 화면 (포털)
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-150">
       {/* Toast notification */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white text-xs px-4 py-3 rounded-xl shadow-2xl border border-teal-500/40 animate-in fade-in slide-in-from-bottom-2 duration-200 max-w-md">
@@ -845,6 +975,8 @@ export default function App() {
           ivSiteAssessment={ivSiteAssessment}
           draftNote={draftNote}
           emrRecords={emrRecords}
+          stationScrollTarget={stationScrollTarget}
+          onClearScrollTarget={() => setStationScrollTarget(null)}
           onStartNewSession={handleStartNewSession}
           onUpdateDraft={handleUpdateDraft}
           onOpenEmrModal={() => setIsEmrModalOpen(true)}
@@ -858,13 +990,14 @@ export default function App() {
           onSwitchMode={handleSelectMode}
           onOpenFirebaseGuide={() => setIsFirebaseGuideOpen(true)}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+          onOpenHandoff={() => setIsHandoffOpen(true)}
           isDarkMode={isDarkMode}
           onToggleDarkMode={toggleDarkMode}
           onSimulateEvent={handleTriggerEvent}
         />
       )}
       {currentMode === 'STATION' && authorizedSessionId === currentSession.sessionId && (
-        <button className="fixed bottom-5 left-5 z-40 rounded-xl bg-teal-700 px-4 py-2 text-sm font-bold text-white shadow-lg" onClick={() => setIsHandoffOpen(true)}>간호사 교대 관리</button>
+        <button className="hidden md:flex fixed bottom-5 left-5 z-40 rounded-xl bg-teal-700 px-4 py-2 text-sm font-bold text-white shadow-lg" onClick={() => setIsHandoffOpen(true)}>간호사 교대 관리</button>
       )}
       {isHandoffOpen && authUser && (
         <HandoffPanel session={currentSession} currentUid={authUser.uid} onUpdated={setCurrentSession} onClose={() => setIsHandoffOpen(false)} />

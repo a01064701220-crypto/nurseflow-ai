@@ -262,7 +262,10 @@ export class StorageService {
         return session;
       }
       return null;
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === 'permission-denied' || err?.message?.includes('insufficient permissions')) {
+        throw new Error('Station에서 먼저 참여 승인이 필요합니다. Station 화면의 [간호사 교대 관리]에서 참여자로 등록해 주세요.');
+      }
       console.error('fetchSessionFromFirestore error:', err);
       throw err;
     }
@@ -353,9 +356,16 @@ export class StorageService {
       return { success: true, session: remoteSession, events };
     } catch (err: any) {
       console.error('verifyAndJoinSession error:', err);
+      const isPermError =
+        err?.code === 'permission-denied' ||
+        err?.message?.includes('insufficient permissions') ||
+        err?.message?.includes('참여 승인') ||
+        err?.message?.includes('접근 권한');
       return {
         success: false,
-        error: `세션 확인 중 클라우드 오류가 발생했습니다: ${err.message || err}`,
+        error: isPermError
+          ? 'Station에서 먼저 참여 승인이 필요합니다. Station 화면의 [간호사 교대 관리]에서 참여자로 등록해 주세요.'
+          : (err.message || '세션 확인 중 클라우드 오류가 발생했습니다.'),
       };
     }
   }
@@ -695,6 +705,14 @@ export class StorageService {
       return { success: false, error: '현재 세션에서 이미 완료된 간호 행위 단계입니다.' };
     }
 
+    const user = await ensureAuthenticated();
+    const approvedNurse = await loadApprovedNurse();
+    const remoteSession = await this.fetchSessionFromFirestore(effectiveSessionId);
+    if (!remoteSession) {
+      return { success: false, error: `세션 [${effectiveSessionId}]을(를) 찾을 수 없습니다.` };
+    }
+    assertSessionAccess(remoteSession, user.uid, true);
+
     const now = new Date();
     const isoNow = now.toISOString();
     const formattedTime = now.toLocaleTimeString('ko-KR', {
@@ -734,14 +752,14 @@ export class StorageService {
     const newEvent: NursingEvent = {
       eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       sessionId: effectiveSessionId,
-      patientId: params.patientId || DEFAULT_PATIENT.id,
-      nurseId: params.nurseId || DEFAULT_NURSE.nurseId,
-      nurseUid: params.nurseUid || (await ensureAuthenticated()).uid,
+      patientId: remoteSession.patientId || params.patientId || DEFAULT_PATIENT.id,
+      nurseId: approvedNurse.nurseId || params.nurseId || DEFAULT_NURSE.nurseId,
+      nurseUid: user.uid,
       eventType: params.eventType,
       source: resolvedSource,
       occurredAt: isoNow,
       createdAt: isoNow,
-      nurseName: params.nurseName || DEFAULT_NURSE.nurseName,
+      nurseName: approvedNurse.nurseName || params.nurseName || DEFAULT_NURSE.nurseName,
       eventTimestamp: formattedTime,
       rawDate: isoNow,
       eventDescription: params.eventDescription,
@@ -788,21 +806,10 @@ export class StorageService {
         sessionId: effectiveSessionId,
       });
 
-      // 1. Ensure authentication
-      await ensureAuthenticated();
-
-      // 2. Ensure target session document exists in Firestore (required by security rules)
-      await this.ensureSessionInFirestore(currentSession, true);
-
-      // 3. Pre-check: Verify eventId not already stored in Firestore
-      const eventDocRef = doc(db, 'nursingEvents', newEvent.eventId);
-      const existingDoc = await getDoc(eventDocRef);
-      if (existingDoc.exists()) {
-        console.warn(`[StorageService.appendEvent] Duplicate eventId already on server: ${newEvent.eventId}`);
-        return { success: false, error: '동일한 이벤트 ID가 이미 서버에 저장되어 있습니다.' };
-      }
-
-      // 4. Pre-check: For single-action stage, verify server doesn't already have this stage
+      // 1. Session stage duplicate check on server
+      // Note: Client queries detect existing stage records, but client checks alone
+      // cannot fully guarantee zero duplication in concurrent distributed environments.
+      // Firestore rule 'allow update, delete: if false' strictly ensures create-only document immutability.
       if (isSingleActionStage) {
         const q = query(
           collection(db, 'nursingEvents'),
@@ -822,22 +829,19 @@ export class StorageService {
         }
       }
 
-      // 5. Sanitize clean document (omits any undefined keys)
+      // 2. Create-only event write (No getDoc on non-existent doc to avoid rule evaluation on null resource)
+      const eventDocRef = doc(db, 'nursingEvents', newEvent.eventId);
       const cleanDoc = sanitizeForFirestore(newEvent);
       await setDoc(eventDocRef, cleanDoc);
 
-      // 6. Update session metadata in Firestore
+      // 3. Update session metadata in Firestore
       const sessionRef = doc(db, 'demoSessions', effectiveSessionId);
-      await setDoc(
-        sessionRef,
-        {
-          eventsCount: events.length + 1,
-          lastSyncAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      await updateDoc(sessionRef, {
+        eventsCount: events.length + 1,
+        lastSyncAt: new Date().toISOString(),
+      });
 
-      // 7. Only upon successful Cloud Firestore write, save to LocalStorage and notify subscribers
+      // 4. Save locally and sync
       const updatedEvents = [...events, newEvent];
       this.saveSessionEvents(effectiveSessionId, updatedEvents);
 
@@ -889,6 +893,14 @@ export class StorageService {
       sessionId: effectiveSessionId,
     });
 
+    const user = await ensureAuthenticated();
+    const approvedNurse = await loadApprovedNurse();
+    const remoteSession = await this.fetchSessionFromFirestore(effectiveSessionId);
+    if (!remoteSession) {
+      return { success: false, error: `세션 [${effectiveSessionId}]을(를) 찾을 수 없습니다.` };
+    }
+    assertSessionAccess(remoteSession, user.uid, true);
+
     const now = new Date();
     const isoNow = now.toISOString();
     const formattedTime = now.toLocaleTimeString('ko-KR', {
@@ -901,14 +913,14 @@ export class StorageService {
     const newEvent: NursingEvent = {
       eventId: `evt_vn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       sessionId: effectiveSessionId,
-      patientId: params.patientId || DEFAULT_PATIENT.id,
-      nurseId: params.nurseId || DEFAULT_NURSE.nurseId,
-      nurseUid: params.nurseUid || (await ensureAuthenticated()).uid,
+      patientId: remoteSession.patientId || params.patientId || DEFAULT_PATIENT.id,
+      nurseId: approvedNurse.nurseId || params.nurseId || DEFAULT_NURSE.nurseId,
+      nurseUid: user.uid,
       eventType: 'VOICE_NOTE',
       source: 'speech',
       occurredAt: isoNow,
       createdAt: isoNow,
-      nurseName: params.nurseName || DEFAULT_NURSE.nurseName,
+      nurseName: approvedNurse.nurseName || params.nurseName || DEFAULT_NURSE.nurseName,
       eventTimestamp: formattedTime,
       rawDate: isoNow,
       eventDescription: `음성 간호 기록: "${cleanTranscript}"`,
@@ -962,28 +974,16 @@ export class StorageService {
         linkedStep: newEvent.linkedStep,
       });
 
-      await ensureAuthenticated();
-      await this.ensureSessionInFirestore(currentSession, true);
-
+      // Create-only write without getDoc on non-existent document
       const eventDocRef = doc(db, 'nursingEvents', newEvent.eventId);
-      const existingDoc = await getDoc(eventDocRef);
-      if (existingDoc.exists()) {
-        console.warn(`[StorageService.saveVoiceNote] Duplicate eventId already on server: ${newEvent.eventId}`);
-        return { success: false, error: '동일한 음성 메모 ID가 이미 서버에 저장되어 있습니다.' };
-      }
-
       const cleanDoc = sanitizeForFirestore(newEvent);
       await setDoc(eventDocRef, cleanDoc);
 
       const sessionRef = doc(db, 'demoSessions', effectiveSessionId);
-      await setDoc(
-        sessionRef,
-        {
-          eventsCount: events.length + 1,
-          lastSyncAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      await updateDoc(sessionRef, {
+        eventsCount: events.length + 1,
+        lastSyncAt: new Date().toISOString(),
+      });
 
       const updatedEvents = [...events, newEvent];
       this.saveSessionEvents(effectiveSessionId, updatedEvents);
@@ -1013,7 +1013,8 @@ export class StorageService {
     if (draft) {
       if (!draft.sessionId) throw new Error('간호기록에 세션 ID가 없습니다.');
       await this.ensureSessionInFirestore({ sessionId: draft.sessionId } as DemoSession, true);
-      await setDoc(doc(db, 'nursingRecords', draft.id), draft, { merge: true });
+      const cleanDraft = sanitizeForFirestore(draft);
+      await setDoc(doc(db, 'nursingRecords', draft.id), cleanDraft, { merge: true });
       try {
         localStorage.setItem(STORAGE_KEYS.DRAFT, JSON.stringify(draft));
         this.broadcast('DRAFT_UPDATED', draft);
@@ -1045,7 +1046,8 @@ export class StorageService {
       const latest = records[0];
       if (!latest.sessionId) throw new Error('Mock EMR 기록에 세션 ID가 없습니다.');
       await this.ensureSessionInFirestore({ sessionId: latest.sessionId } as DemoSession, true);
-      await setDoc(doc(db, 'emrTransfers', latest.transferId), latest);
+      const cleanTransfer = sanitizeForFirestore(latest);
+      await setDoc(doc(db, 'emrTransfers', latest.transferId), cleanTransfer);
     }
     try {
       localStorage.setItem(STORAGE_KEYS.EMR_RECORDS, JSON.stringify(records));
@@ -1060,9 +1062,17 @@ export class StorageService {
       throw new Error('Mock EMR과 승인 기록의 세션이 일치하지 않습니다.');
     }
     await this.ensureSessionInFirestore({ sessionId: transfer.sessionId } as DemoSession, true);
+    const cleanTransfer = sanitizeForFirestore(transfer);
     const batch = writeBatch(db);
-    batch.set(doc(db, 'emrTransfers', transfer.transferId), transfer);
-    batch.set(doc(db, 'nursingRecords', updatedDraft.id), updatedDraft, { merge: true });
+    batch.set(doc(db, 'emrTransfers', transfer.transferId), cleanTransfer);
+    batch.update(doc(db, 'nursingRecords', updatedDraft.id), {
+      emrTransmitted: true,
+      emrTransmittedAt: updatedDraft.emrTransmittedAt || new Date().toISOString(),
+    });
+    batch.update(doc(db, 'demoSessions', transfer.sessionId), {
+      emrTransmitted: true,
+      lastSyncAt: new Date().toISOString(),
+    });
     await batch.commit();
     const records = [transfer, ...this.loadEmrRecords().filter((entry) => entry.transferId !== transfer.transferId)];
     try {

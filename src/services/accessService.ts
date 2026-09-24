@@ -23,7 +23,7 @@ export function isSessionParticipant(session: DemoSession, uid: string): boolean
 
 export function assertSessionAccess(session: DemoSession, uid: string, write = false): void {
   if (!isSessionParticipant(session, uid)) {
-    throw new Error('이 세션에 대한 접근 권한이 없습니다.');
+    throw new Error('Station에서 먼저 참여 승인이 필요합니다. Station 화면의 [간호사 교대 관리]에서 참여자로 등록해 주세요.');
   }
   if (write && (session.status !== 'ACTIVE' || session.activeNurseUid !== uid)) {
     throw new Error('현재 담당 간호사만 활성 세션에 기록할 수 있습니다.');

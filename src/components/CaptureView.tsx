@@ -61,7 +61,7 @@ interface CaptureViewProps {
   onSaveIvAssessment: (assessment: IvSiteAssessment) => void;
   onSaveVoiceNote: (transcript: string, linkedStep?: string, clinicalFindings?: any) => void;
   onStartNewSession: () => void;
-  onSwitchMode: (mode: AppMode) => void;
+  onSwitchMode: (mode: AppMode, rememberPreference?: boolean, targetElementId?: string) => void;
   onOpenFirebaseGuide: () => void;
   onOpenDiagnostics?: () => void;
   isDarkMode: boolean;
@@ -262,13 +262,13 @@ export const CaptureView: React.FC<CaptureViewProps> = ({
               <span className="font-extrabold text-sm tracking-tight text-white">
                 NurseFlow Capture
               </span>
-              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-sky-950 text-sky-300 font-bold border border-sky-800">
-                현장 모바일
+              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 font-bold border border-purple-800">
+                웨어러블 시뮬레이터
               </span>
             </div>
             <div className="text-[10px] text-slate-400 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-emerald-300 font-medium">Firestore 실시간 연동</span>
+              <span className="text-emerald-300 font-medium">Station 실시간 연동</span>
             </div>
           </div>
         </div>
@@ -837,6 +837,10 @@ export const CaptureView: React.FC<CaptureViewProps> = ({
         onTriggerEvent={onTriggerEvent}
         onConfirmVerification={onConfirmVerification}
         onSaveVoiceNote={onSaveVoiceNote}
+        onEndDemo={() => {
+          setIsHandsFreeOpen(false);
+          onSwitchMode('STATION', true, 'mobile-quick-actions');
+        }}
       />
 
       {/* Hands-Free Hardware Diagnostics Modal */}
