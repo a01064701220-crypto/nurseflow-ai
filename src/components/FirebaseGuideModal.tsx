@@ -40,55 +40,7 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({
     }
   };
 
-  const deployedRules = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    match /nurses/{nurseId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /patients/{patientId} {
-      allow read, write: if isAuthenticated();
-    }
-    match /medicationOrders/{orderId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // Interactive Demo Sessions
-    match /demoSessions/{sessionId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.sessionId != null;
-      allow update: if isAuthenticated();
-      allow delete: if false;
-    }
-
-    // Bedside Nursing Events: Strictly append-only audit trail
-    match /nursingEvents/{eventId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() 
-        && request.resource.data.eventId != null
-        && request.resource.data.sessionId != null;
-      allow update, delete: if false;
-    }
-
-    // Nursing Progress Records
-    match /nursingRecords/{recordId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && request.resource.data.id != null;
-      allow delete: if false;
-    }
-
-    // EMR Transmissions: Legally binding electronic transfers
-    match /emrTransfers/{transferId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.signatureHash != null;
-      allow update, delete: if false;
-    }
-  }
-}`;
+  const deployedRules = '현재 실제 게시 규칙은 주요 컬렉션의 공개 읽기와 인증 우회 쓰기를 허용합니다. 이 화면의 안내를 게시된 규칙 원문으로 사용하지 마세요. 작업용 사본의 firestore.rules는 기존 세션의 UID 매핑, 두 기기 로그인, 권한 테스트를 마친 후 별도 승인으로 게시해야 합니다.';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
@@ -211,25 +163,8 @@ service cloud.firestore {
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 text-xs">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                배포된 Firestore Security Rules
+                보안 규칙 전환 안내
               </h4>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(deployedRules, 'rules')}
-                className="text-[11px] px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 flex items-center gap-1 font-medium transition"
-              >
-                {copiedSection === 'rules' ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-500" />
-                    <span className="text-emerald-500">복사 완료</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span>규칙 복사</span>
-                  </>
-                )}
-              </button>
             </div>
             <pre className="p-3 bg-slate-950 text-slate-300 font-mono text-[10px] rounded-xl overflow-x-auto border border-slate-800 leading-relaxed max-h-48">
               {deployedRules}

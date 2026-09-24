@@ -651,14 +651,14 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
           deviceType: 'HANDS_FREE_WEARABLE',
           scannedCode: detectedMatch.code,
           isMatched: detectedMatch.isMatched,
-          fiveRightsVerified: detectedMatch.isMatched,
+          fiveRightsVerified: false,
           rxId: detectedMatch.medicationData?.rxId || prescription.id,
           medicationName: detectedMatch.medicationData?.medName || prescription.medicationName,
         });
 
         if (res.success) {
           setFirestoreSaveStatus('SUCCESS');
-          setSaveMessage(`[2단계 완료] 약물(${prescription.medicationName}) 5-Rights 확인 이벤트가 Firestore에 저장되었습니다. 3단계(IV Site 사정)로 전환합니다.`);
+          setSaveMessage(`[2단계 완료] 약물(${prescription.medicationName}) 바코드 일치 이벤트가 Firestore에 저장되었습니다. 5-Rights는 간호사 별도 확인이 필요합니다.`);
           setDetectedMatch(null);
         } else {
           setFirestoreSaveStatus('FAILED');
@@ -1168,7 +1168,7 @@ export const HandsFreeDemoView: React.FC<HandsFreeDemoViewProps> = ({
                     <span>
                       {detectedMatch.step === 1
                         ? '환자 확인 및 Firestore 기록 (1/5)'
-                        : '약물 5-Rights 확인 및 기록 (2/5)'}
+                        : '약물 바코드 일치 확인 및 기록 (2/5)'}
                     </span>
                   </>
                 )}

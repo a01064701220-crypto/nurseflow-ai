@@ -40,7 +40,7 @@ export const PrescriptionCard: React.FC<PrescriptionCardProps> = ({
                 {isMedicationVerified ? (
                   <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-700/60">
                     <CheckCircle2 className="w-3 h-3" />
-                    약물 5-Right 확인 완료
+                    약물 확인 이벤트 기록됨
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/60 dark:border-amber-700/60">
@@ -79,7 +79,7 @@ export const PrescriptionCard: React.FC<PrescriptionCardProps> = ({
             <div className="text-left">
               <span className="text-[10px] text-slate-400 block">투약 안전 원칙</span>
               <span className="font-medium text-slate-700 dark:text-slate-300">
-                {isMedicationVerified ? '5-Right 대조 검증됨' : '투약 전 대조 필요'}
+                {isMedicationVerified ? '처방 대조 기록됨 · 5-Rights 별도 확인' : '투약 전 대조 필요'}
               </span>
             </div>
           </div>

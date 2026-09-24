@@ -12,6 +12,7 @@ import {
   isStep5,
 } from '../types';
 import { db, ensureAuthenticated } from './firebase';
+import { assertSessionAccess, loadApprovedNurse } from './accessService';
 import {
   collection,
   doc,
@@ -19,6 +20,10 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  updateDoc,
+  arrayUnion,
+  runTransaction,
+  writeBatch,
   query,
   where,
   Unsubscribe,
@@ -192,8 +197,7 @@ export class StorageService {
       localStorage.setItem(STORAGE_KEYS.PRESCRIPTION, JSON.stringify(prescription));
       this.broadcast('PRESCRIPTION_UPDATED', prescription);
 
-      await ensureAuthenticated();
-      await setDoc(doc(db, 'medicationOrders', prescription.id), prescription, { merge: true });
+      // Master order data stays read-only; session events carry status changes.
     } catch (e) {
       console.error('Failed to save prescription:', e);
     }
@@ -232,26 +236,13 @@ export class StorageService {
   /**
    * Guarantees that the session document exists in Firestore (critical for security rules and multi-device lookup)
    */
-  static async ensureSessionInFirestore(session: DemoSession): Promise<void> {
+  static async ensureSessionInFirestore(session: DemoSession, write = false): Promise<void> {
     try {
-      await ensureAuthenticated();
+      const user = await ensureAuthenticated();
       const sessionRef = doc(db, 'demoSessions', session.sessionId);
       const snap = await getDoc(sessionRef);
-      if (!snap.exists()) {
-        await setDoc(sessionRef, {
-          ...session,
-          lastSyncAt: new Date().toISOString(),
-        });
-      } else {
-        await setDoc(
-          sessionRef,
-          {
-            lastSyncAt: new Date().toISOString(),
-            status: session.status || 'ACTIVE',
-          },
-          { merge: true }
-        );
-      }
+      if (!snap.exists()) throw new Error('클라우드에 세션이 없습니다.');
+      assertSessionAccess(snap.data() as DemoSession, user.uid, write);
     } catch (err) {
       console.error('ensureSessionInFirestore error:', err);
       throw err;
@@ -263,10 +254,12 @@ export class StorageService {
    */
   static async fetchSessionFromFirestore(sessionId: string): Promise<DemoSession | null> {
     try {
-      await ensureAuthenticated();
+      const user = await ensureAuthenticated();
       const snap = await getDoc(doc(db, 'demoSessions', sessionId));
       if (snap.exists()) {
-        return snap.data() as DemoSession;
+        const session = snap.data() as DemoSession;
+        assertSessionAccess(session, user.uid);
+        return session;
       }
       return null;
     } catch (err) {
@@ -280,7 +273,7 @@ export class StorageService {
    */
   static async fetchSessionEventsFromFirestore(sessionId: string): Promise<NursingEvent[]> {
     try {
-      await ensureAuthenticated();
+      await this.fetchSessionFromFirestore(sessionId);
       const eventsCol = collection(db, 'nursingEvents');
       const q = query(eventsCol, where('sessionId', '==', sessionId));
       const snap = await getDocs(q);
@@ -300,7 +293,7 @@ export class StorageService {
       return remoteEvents;
     } catch (err) {
       console.error('fetchSessionEventsFromFirestore error:', err);
-      return this.loadEvents(sessionId);
+      throw err;
     }
   }
 
@@ -309,8 +302,9 @@ export class StorageService {
    */
   static async loadAllSessions(): Promise<DemoSession[]> {
     try {
-      await ensureAuthenticated();
-      const snap = await getDocs(collection(db, 'demoSessions'));
+      const user = await ensureAuthenticated();
+      await loadApprovedNurse();
+      const snap = await getDocs(query(collection(db, 'demoSessions'), where('participantUids', 'array-contains', user.uid)));
       const list: DemoSession[] = [];
       snap.forEach((d) => {
         list.push(d.data() as DemoSession);
@@ -337,7 +331,8 @@ export class StorageService {
     sessionId: string
   ): Promise<{ success: boolean; session?: DemoSession; events?: NursingEvent[]; error?: string }> {
     try {
-      await ensureAuthenticated();
+      const user = await ensureAuthenticated();
+      await loadApprovedNurse();
       const remoteSession = await this.fetchSessionFromFirestore(sessionId);
 
       if (!remoteSession) {
@@ -346,14 +341,7 @@ export class StorageService {
           error: `클라우드 Firestore에서 세션 [${sessionId}]을(를) 찾을 수 없습니다. Station 화면의 QR 코드를 다시 확인해 주세요.`,
         };
       }
-
-      // Check if session is active
-      if (remoteSession.status === 'COMPLETED' || remoteSession.status === 'ARCHIVED') {
-        return {
-          success: false,
-          error: `세션 [${sessionId}]은(는) 이미 종료된 세션입니다. Station에서 새 시연 세션을 시작해 주세요.`,
-        };
-      }
+      assertSessionAccess(remoteSession, user.uid);
 
       // Fetch actual events from Firestore for this specific session
       const events = await this.fetchSessionEventsFromFirestore(sessionId);
@@ -377,18 +365,15 @@ export class StorageService {
       localStorage.setItem(STORAGE_KEYS.CURRENT_SESSION, JSON.stringify(session));
       this.broadcast('NEW_SESSION_STARTED', session);
 
-      // Async Firestore write
-      ensureAuthenticated()
-        .then(() => {
-          setDoc(doc(db, 'demoSessions', session.sessionId), session, { merge: true });
-        })
-        .catch((e) => console.warn('setCurrentSession Firestore sync warn:', e));
+      // Selecting a session never creates or changes the server document.
     } catch (e) {
       console.error('Failed to set current session:', e);
     }
   }
 
   static async startNewSession(): Promise<DemoSession> {
+    const user = await ensureAuthenticated();
+    const nurse = await loadApprovedNurse();
     const current = this.getCurrentSession();
     // Backup existing events before starting new session
     const existingEvents = this.loadEvents(current?.sessionId);
@@ -408,7 +393,10 @@ export class StorageService {
     const newSession: DemoSession = {
       sessionId: `SES-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomSuffix}`,
       sessionNumber: (current?.sessionNumber || 1) + 1,
-      nurseId: DEFAULT_NURSE.nurseId,
+      nurseId: nurse.nurseId,
+      ownerUid: user.uid,
+      participantUids: [user.uid],
+      activeNurseUid: user.uid,
       patientId: DEFAULT_PATIENT.id,
       status: 'ACTIVE',
       startedAt: new Date().toLocaleTimeString('ko-KR', {
@@ -421,6 +409,8 @@ export class StorageService {
       lastSyncAt: new Date().toISOString(),
     };
 
+    await setDoc(doc(db, 'demoSessions', newSession.sessionId), newSession);
+
     try {
       localStorage.setItem(STORAGE_KEYS.CURRENT_SESSION, JSON.stringify(newSession));
       this.saveSessionEvents(newSession.sessionId, []);
@@ -430,16 +420,60 @@ export class StorageService {
       console.error('Failed to start new session locally:', e);
     }
 
-    // Ensure session is stored in Cloud Firestore immediately
-    try {
-      await this.ensureSessionInFirestore(newSession);
-    } catch (err) {
-      console.error('Failed to write new session to Firestore:', err);
-    }
-
     this.broadcast('NEW_SESSION_STARTED', newSession);
 
     return newSession;
+  }
+
+  static async addSessionParticipant(sessionId: string, participantUid: string): Promise<DemoSession> {
+    const user = await ensureAuthenticated();
+    const session = await this.fetchSessionFromFirestore(sessionId);
+    if (!session || session.ownerUid !== user.uid) throw new Error('세션 소유자만 참여자를 승인할 수 있습니다.');
+    const participant = await getDoc(doc(db, 'nurses', participantUid));
+    if (!participant.exists() || participant.data().approved !== true) throw new Error('승인된 간호사 계정만 참여할 수 있습니다.');
+    await updateDoc(doc(db, 'demoSessions', sessionId), {
+      participantUids: arrayUnion(participantUid),
+      lastSyncAt: new Date().toISOString(),
+    });
+    const updated = await this.fetchSessionFromFirestore(sessionId);
+    if (!updated) throw new Error('참여자 추가 후 세션을 다시 읽지 못했습니다.');
+    return updated;
+  }
+
+  static async handoffSession(sessionId: string, nextUid: string): Promise<DemoSession> {
+    const user = await ensureAuthenticated();
+    const nurse = await loadApprovedNurse();
+    const sessionRef = doc(db, 'demoSessions', sessionId);
+    const now = new Date().toISOString();
+    const eventId = `evt_handoff_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    await runTransaction(db, async (transaction) => {
+      const snapshot = await transaction.get(sessionRef);
+      if (!snapshot.exists()) throw new Error('세션을 찾을 수 없습니다.');
+      const session = snapshot.data() as DemoSession;
+      assertSessionAccess(session, user.uid, true);
+      if (!(session.participantUids || []).includes(nextUid)) throw new Error('먼저 새 담당 간호사의 참여를 승인해 주세요.');
+      if (nextUid === user.uid) throw new Error('현재 담당 간호사와 같은 계정입니다.');
+      const event: NursingEvent = {
+        eventId,
+        sessionId,
+        patientId: session.patientId || DEFAULT_PATIENT.id,
+        nurseId: nurse.nurseId,
+        nurseUid: user.uid,
+        nurseName: nurse.nurseName,
+        eventType: 'NURSE_HANDOFF',
+        source: 'MANUAL_CONFIRMATION',
+        eventSource: 'Manual Confirmation',
+        eventDescription: '담당 간호사 교대 승인',
+        occurredAt: now,
+        createdAt: now,
+        metadata: { fromUid: user.uid, toUid: nextUid },
+      };
+      transaction.set(doc(db, 'nursingEvents', eventId), event);
+      transaction.update(sessionRef, { activeNurseUid: nextUid, lastSyncAt: now });
+    });
+    const updated = await this.fetchSessionFromFirestore(sessionId);
+    if (!updated) throw new Error('교대 후 세션을 다시 읽지 못했습니다.');
+    return updated;
   }
 
   // Events Management (Strictly session-scoped)
@@ -525,7 +559,7 @@ export class StorageService {
     }
     currentListeningSessionId = sessionId;
 
-    ensureAuthenticated()
+    this.fetchSessionFromFirestore(sessionId)
       .then(() => {
         if (isCancelled) return;
         try {
@@ -607,6 +641,7 @@ export class StorageService {
     patientId?: string;
     sessionId?: string;
     nurseId?: string;
+    nurseUid?: string;
     nurseName?: string;
     verificationResult?: 'MATCHED' | 'MISMATCHED' | 'CONFIRMED' | 'WARNING';
     source?: string;
@@ -701,6 +736,7 @@ export class StorageService {
       sessionId: effectiveSessionId,
       patientId: params.patientId || DEFAULT_PATIENT.id,
       nurseId: params.nurseId || DEFAULT_NURSE.nurseId,
+      nurseUid: params.nurseUid || (await ensureAuthenticated()).uid,
       eventType: params.eventType,
       source: resolvedSource,
       occurredAt: isoNow,
@@ -756,7 +792,7 @@ export class StorageService {
       await ensureAuthenticated();
 
       // 2. Ensure target session document exists in Firestore (required by security rules)
-      await this.ensureSessionInFirestore(currentSession);
+      await this.ensureSessionInFirestore(currentSession, true);
 
       // 3. Pre-check: Verify eventId not already stored in Firestore
       const eventDocRef = doc(db, 'nursingEvents', newEvent.eventId);
@@ -828,6 +864,7 @@ export class StorageService {
     sessionId?: string;
     patientId?: string;
     nurseId?: string;
+    nurseUid?: string;
     nurseName?: string;
     linkedStep?: string;
     clinicalFindings?: any;
@@ -850,7 +887,6 @@ export class StorageService {
       completedSteps,
       duplicateEvaluation: 'BYPASSED (VOICE_NOTE is multi-recordable independent event)',
       sessionId: effectiveSessionId,
-      transcript: cleanTranscript,
     });
 
     const now = new Date();
@@ -867,6 +903,7 @@ export class StorageService {
       sessionId: effectiveSessionId,
       patientId: params.patientId || DEFAULT_PATIENT.id,
       nurseId: params.nurseId || DEFAULT_NURSE.nurseId,
+      nurseUid: params.nurseUid || (await ensureAuthenticated()).uid,
       eventType: 'VOICE_NOTE',
       source: 'speech',
       occurredAt: isoNow,
@@ -922,12 +959,11 @@ export class StorageService {
         sessionId: effectiveSessionId,
         eventType: newEvent.eventType,
         source: newEvent.source,
-        transcript: cleanTranscript,
         linkedStep: newEvent.linkedStep,
       });
 
       await ensureAuthenticated();
-      await this.ensureSessionInFirestore(currentSession);
+      await this.ensureSessionInFirestore(currentSession, true);
 
       const eventDocRef = doc(db, 'nursingEvents', newEvent.eventId);
       const existingDoc = await getDoc(eventDocRef);
@@ -974,19 +1010,23 @@ export class StorageService {
   }
 
   static async saveDraft(draft: NursingRecord | null): Promise<void> {
-    try {
-      if (draft) {
+    if (draft) {
+      if (!draft.sessionId) throw new Error('간호기록에 세션 ID가 없습니다.');
+      await this.ensureSessionInFirestore({ sessionId: draft.sessionId } as DemoSession, true);
+      await setDoc(doc(db, 'nursingRecords', draft.id), draft, { merge: true });
+      try {
         localStorage.setItem(STORAGE_KEYS.DRAFT, JSON.stringify(draft));
         this.broadcast('DRAFT_UPDATED', draft);
-
-        await ensureAuthenticated();
-        await setDoc(doc(db, 'nursingRecords', draft.id), draft, { merge: true });
-      } else {
+      } catch (error) {
+        console.warn('Local draft cache failed after cloud save:', error);
+      }
+    } else {
+      try {
         localStorage.removeItem(STORAGE_KEYS.DRAFT);
         this.broadcast('DRAFT_UPDATED', null);
+      } catch (error) {
+        console.warn('Local draft cache clear failed:', error);
       }
-    } catch (e) {
-      console.error('Failed to save draft note:', e);
     }
   }
 
@@ -1001,17 +1041,37 @@ export class StorageService {
   }
 
   static async saveEmrRecords(records: EMRTransfer[]): Promise<void> {
+    if (records.length > 0) {
+      const latest = records[0];
+      if (!latest.sessionId) throw new Error('Mock EMR 기록에 세션 ID가 없습니다.');
+      await this.ensureSessionInFirestore({ sessionId: latest.sessionId } as DemoSession, true);
+      await setDoc(doc(db, 'emrTransfers', latest.transferId), latest);
+    }
     try {
       localStorage.setItem(STORAGE_KEYS.EMR_RECORDS, JSON.stringify(records));
       this.broadcast('EMR_RECORDS_UPDATED', records);
+    } catch (error) {
+      console.warn('Local Mock EMR cache failed after cloud save:', error);
+    }
+  }
 
-      if (records.length > 0) {
-        await ensureAuthenticated();
-        const latest = records[0];
-        await setDoc(doc(db, 'emrTransfers', latest.transferId), latest, { merge: true });
-      }
-    } catch (e) {
-      console.error('Failed to save EMR records:', e);
+  static async saveEmrTransmission(transfer: EMRTransfer, updatedDraft: NursingRecord): Promise<void> {
+    if (!transfer.sessionId || transfer.sessionId !== updatedDraft.sessionId) {
+      throw new Error('Mock EMR과 승인 기록의 세션이 일치하지 않습니다.');
+    }
+    await this.ensureSessionInFirestore({ sessionId: transfer.sessionId } as DemoSession, true);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'emrTransfers', transfer.transferId), transfer);
+    batch.set(doc(db, 'nursingRecords', updatedDraft.id), updatedDraft, { merge: true });
+    await batch.commit();
+    const records = [transfer, ...this.loadEmrRecords().filter((entry) => entry.transferId !== transfer.transferId)];
+    try {
+      localStorage.setItem(STORAGE_KEYS.EMR_RECORDS, JSON.stringify(records));
+      localStorage.setItem(STORAGE_KEYS.DRAFT, JSON.stringify(updatedDraft));
+      this.broadcast('EMR_RECORDS_UPDATED', records);
+      this.broadcast('DRAFT_UPDATED', updatedDraft);
+    } catch (error) {
+      console.warn('Local Mock EMR cache failed after cloud save:', error);
     }
   }
 

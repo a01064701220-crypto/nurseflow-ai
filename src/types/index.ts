@@ -17,7 +17,8 @@ export type EventType =
   | 'MEDICATION_START'
   | 'INFUSION_END'
   | 'MEDICATION_END'
-  | 'VOICE_NOTE';
+  | 'VOICE_NOTE'
+  | 'NURSE_HANDOFF';
 
 export const isStep4 = (type?: string | null): boolean =>
   type === 'MEDICATION_START' || type === 'INFUSION_START';
@@ -28,6 +29,8 @@ export const isStep5 = (type?: string | null): boolean =>
 export type EventStatus = 'COMPLETED' | 'IN_PROGRESS' | 'PENDING';
 
 export interface Nurse {
+  uid?: string;
+  approved?: boolean;
   nurseId: string; // e.g. "NURSE-2026-001"
   nurseName: string; // e.g. "양두영"
   licenseNumber: string; // e.g. "RN-89412"
@@ -55,6 +58,7 @@ export interface NursingEvent {
   sessionId: string; // e.g. "SES-20260923-XORN0"
   patientId: string; // e.g. "TEST-P001"
   nurseId: string; // e.g. "NURSE-2026-001"
+  nurseUid?: string;
   eventType: EventType;
   source: string; // e.g. "MANUAL_CONFIRMATION", "VOICE_AI_CONFIRMED", "speech", "QR_SCAN", "BARCODE_SCAN"
   occurredAt: string; // ISO 8601 string
@@ -135,6 +139,7 @@ export interface NursingRecord {
   patientId: string;
   sessionId?: string;
   nurseId?: string;
+  nurseUid?: string;
   content: string;
   status: 'DRAFT_PENDING_REVIEW' | 'APPROVED';
   version: number;
@@ -143,6 +148,7 @@ export interface NursingRecord {
   approvedAt?: string;
   approver?: string; // "양두영 간호사"
   approverId?: string;
+  approverUid?: string;
   editHistory: EditHistoryItem[];
   emrTransmitted: boolean;
   emrTransmittedAt?: string;
@@ -153,6 +159,9 @@ export type DraftNote = NursingRecord;
 
 export interface EMRTransfer {
   transferId: string; // Unique transfer ID
+  nursingRecordId?: string;
+  sessionId?: string;
+  nurseUid?: string;
   emrRecordId: string;
   chartNumber: string;
   patientId: string;
@@ -178,6 +187,10 @@ export type TransmissionStatus = 'IDLE' | 'PENDING' | 'TRANSMITTING' | 'SUCCESS'
 
 export interface DemoSession {
   sessionId: string;
+  ownerUid?: string;
+  participantUids?: string[];
+  activeNurseUid?: string;
+  handoffHistory?: Array<{ fromUid: string; toUid: string; at: string }>;
   sessionNumber: number;
   nurseId?: string;
   patientId?: string;

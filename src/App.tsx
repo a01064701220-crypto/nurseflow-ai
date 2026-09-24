@@ -26,7 +26,12 @@ import { StationView } from './components/StationView';
 import { CaptureView } from './components/CaptureView';
 import { FirebaseGuideModal } from './components/FirebaseGuideModal';
 import { DiagnosticsModal } from './components/DiagnosticsModal';
-import { ensureAuthenticated } from './services/firebase';
+import { HandoffPanel } from './components/HandoffPanel';
+import { db } from './services/firebase';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { auth, signInNurse, signOutNurse } from './services/firebase';
+import { loadApprovedNurse } from './services/accessService';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { AlertTriangle, RefreshCw, Smartphone, QrCode } from 'lucide-react';
 
 export default function App() {
@@ -64,7 +69,13 @@ export default function App() {
   });
 
   // Core Data Entities (Strictly initialized from URL session if present to eliminate race condition)
-  const [nurse] = useState<Nurse>(() => StorageService.loadNurse());
+  const [nurse, setNurse] = useState<Nurse>(() => StorageService.loadNurse());
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [accessReady, setAccessReady] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authorizedSessionId, setAuthorizedSessionId] = useState<string | null>(null);
+  const [sessionCheckComplete, setSessionCheckComplete] = useState(false);
   const [patient] = useState<Patient>(() => StorageService.loadPatient());
   const [prescription, setPrescription] = useState<MedicationOrder>(() =>
     StorageService.loadPrescription()
@@ -115,12 +126,19 @@ export default function App() {
     StorageService.loadEmrRecords()
   );
 
+  const showSessionRecords = (sessionId: string) => {
+    const cachedDraft = StorageService.loadDraft();
+    setDraftNote(cachedDraft?.sessionId === sessionId ? cachedDraft : null);
+    setEmrRecords(StorageService.loadEmrRecords().filter((entry) => entry.sessionId === sessionId));
+  };
+
   // Session Connection Verification State (Specifically for Mobile Capture via QR)
   const [isVerifyingSession, setIsVerifyingSession] = useState<boolean>(false);
   const [sessionVerificationError, setSessionVerificationError] = useState<string | null>(null);
 
   // Diagnostics & Listener Health Monitoring State
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [isHandoffOpen, setIsHandoffOpen] = useState(false);
   const [firestoreEventsCount, setFirestoreEventsCount] = useState<number>(0);
   const [listenerStatus, setListenerStatus] = useState<{
     state: 'LISTENING_SERVER' | 'LISTENING_CACHE' | 'ERROR' | 'INITIALIZING';
@@ -160,15 +178,34 @@ export default function App() {
     }, 4000);
   };
 
-  // 1. Initial Session Registration & Verification Pipeline
-  useEffect(() => {
-    const initApp = async () => {
-      try {
-        await ensureAuthenticated();
-      } catch (err) {
-        console.warn('Firebase initial authentication warning:', err);
-      }
+  useEffect(() => onAuthStateChanged(auth, async (user) => {
+    setAuthReady(false);
+    setAuthUser(user);
+    setAccessReady(false);
+    setAuthorizedSessionId(null);
+    if (!user) {
+      setAuthError(null);
+      setAuthReady(true);
+      return;
+    }
+    try {
+      const profile = await loadApprovedNurse();
+      if (auth.currentUser?.uid !== user.uid) return;
+      setNurse(profile);
+      setAuthError(null);
+      setAccessReady(true);
+    } catch (error: any) {
+      if (auth.currentUser?.uid === user.uid) setAuthError(error?.message || '간호사 권한 확인에 실패했습니다.');
+    } finally {
+      if (auth.currentUser?.uid === user.uid) setAuthReady(true);
+    }
+  }), []);
 
+  // 1. Verify the selected session after identity and profile are established.
+  useEffect(() => {
+    if (!authReady || !accessReady || !authUser) return;
+    const initApp = async () => {
+      setSessionCheckComplete(false);
       if (typeof window === 'undefined') return;
 
       const urlParams = new URLSearchParams(window.location.search);
@@ -183,7 +220,9 @@ export default function App() {
         setIsVerifyingSession(false);
 
         if (result.success && result.session) {
+          setAuthorizedSessionId(result.session.sessionId);
           setCurrentSession(result.session);
+          showSessionRecords(result.session.sessionId);
           if (result.events) {
             setEvents(result.events);
             setFirestoreEventsCount(result.events.length);
@@ -194,27 +233,35 @@ export default function App() {
           }
           showToast(`Station 클라우드 세션 [${result.session.sessionId}]에 성공적으로 연결되었습니다.`);
         } else {
+          setAuthorizedSessionId(null);
           // Explicit error: do NOT silently replace with a random new session!
           setSessionVerificationError(
             result.error || `클라우드 세션 [${sessionParam}]을 찾을 수 없습니다.`
           );
         }
       } else {
-        // Station mode or direct standalone access: guarantee current session exists in Firestore
+        // Never create a guessed local session during page load.
         try {
-          await StorageService.ensureSessionInFirestore(currentSession);
+          const result = await StorageService.verifyAndJoinSession(currentSession.sessionId);
+          if (result.success && result.session) {
+            setCurrentSession(result.session);
+            setEvents(result.events || []);
+            setAuthorizedSessionId(result.session.sessionId);
+            showSessionRecords(result.session.sessionId);
+          }
         } catch (e) {
-          console.warn('Failed to ensure current session in Firestore on startup:', e);
+          console.warn('No authorized session selected:', e);
         }
       }
+      setSessionCheckComplete(true);
     };
 
     initApp();
-  }, []);
+  }, [authReady, accessReady, authUser?.uid]);
 
   // 2. Real-time Firestore onSnapshot listener for the exact currentSession.sessionId
   useEffect(() => {
-    if (!currentSession.sessionId || sessionVerificationError) return;
+    if (!currentSession.sessionId || authorizedSessionId !== currentSession.sessionId || sessionVerificationError) return;
 
     const unsubFirestore = StorageService.listenToSessionEvents(
       currentSession.sessionId,
@@ -263,7 +310,42 @@ export default function App() {
     return () => {
       unsubFirestore();
     };
-  }, [currentSession.sessionId, sessionVerificationError]);
+  }, [currentSession.sessionId, authorizedSessionId, sessionVerificationError]);
+
+  // Station and Capture both observe changes to the active nurse and participants.
+  useEffect(() => {
+    if (!authorizedSessionId || !authUser) return;
+    return onSnapshot(doc(db, 'demoSessions', authorizedSessionId), (snapshot) => {
+      if (!snapshot.exists()) return;
+      const session = snapshot.data() as DemoSession;
+      if (!(session.participantUids || []).includes(authUser.uid)) {
+        setAuthorizedSessionId(null);
+        setSessionVerificationError('세션 참여 권한이 종료되었습니다.');
+        return;
+      }
+      setCurrentSession(session);
+    }, (error) => {
+      setSessionVerificationError(error.message);
+      setAuthorizedSessionId(null);
+    });
+  }, [authorizedSessionId, authUser?.uid]);
+
+  // Shared Mock EMR state. Existing local-only legacy records remain visible until mapped.
+  useEffect(() => {
+    if (!authorizedSessionId) return;
+    const draftQuery = query(collection(db, 'nursingRecords'), where('sessionId', '==', authorizedSessionId));
+    const transferQuery = query(collection(db, 'emrTransfers'), where('sessionId', '==', authorizedSessionId));
+    const stopDrafts = onSnapshot(draftQuery, (snapshot) => {
+      const drafts = snapshot.docs.map((entry) => entry.data() as NursingRecord)
+        .sort((a, b) => b.id.localeCompare(a.id));
+      setDraftNote(drafts[0] || null);
+    }, (error) => showToast(`간호기록 동기화 실패: ${error.message}`));
+    const stopTransfers = onSnapshot(transferQuery, (snapshot) => {
+      const remote = snapshot.docs.map((entry) => entry.data() as EMRTransfer);
+      setEmrRecords(remote);
+    }, (error) => showToast(`Mock EMR 동기화 실패: ${error.message}`));
+    return () => { stopDrafts(); stopTransfers(); };
+  }, [authorizedSessionId]);
 
   // 3. In-browser BroadcastChannel synchronization (for same-browser multiple tabs)
   useEffect(() => {
@@ -283,28 +365,36 @@ export default function App() {
           setPrescription(payload);
           break;
         case 'DRAFT_UPDATED':
-          setDraftNote(payload);
+          if (!payload || payload.sessionId === currentSession.sessionId) setDraftNote(payload);
           break;
         case 'EMR_RECORDS_UPDATED':
-          setEmrRecords(payload);
+          setEmrRecords((payload as EMRTransfer[]).filter((entry) => entry.sessionId === currentSession.sessionId));
           break;
         case 'NEW_SESSION_STARTED':
           if (payload && payload.sessionId !== currentSession.sessionId) {
-            setCurrentSession(payload);
-            setEvents([]);
-            setFirestoreEventsCount(0);
-            setIvSiteAssessment(null);
-            setDraftNote(null);
-            setPrescription(DEFAULT_PRESCRIPTION);
+            void StorageService.verifyAndJoinSession(payload.sessionId).then((result) => {
+              if (!result.success || !result.session) return;
+              setAuthorizedSessionId(result.session.sessionId);
+              setCurrentSession(result.session);
+              setEvents(result.events || []);
+              showSessionRecords(result.session.sessionId);
+              setFirestoreEventsCount(result.events?.length || 0);
+              setIvSiteAssessment(null);
+              setDraftNote(null);
+              setPrescription(DEFAULT_PRESCRIPTION);
+            });
           }
           break;
         case 'SESSION_SWITCHED':
           if (payload && payload.session) {
-            setCurrentSession(payload.session);
-            if (payload.events) {
-              setEvents(payload.events);
-              setFirestoreEventsCount(payload.events.length);
-            }
+            void StorageService.verifyAndJoinSession(payload.session.sessionId).then((result) => {
+              if (!result.success || !result.session) return;
+              setAuthorizedSessionId(result.session.sessionId);
+              setCurrentSession(result.session);
+              setEvents(result.events || []);
+              showSessionRecords(result.session.sessionId);
+              setFirestoreEventsCount(result.events?.length || 0);
+            });
           }
           break;
       }
@@ -337,11 +427,13 @@ export default function App() {
   const handleStartNewSession = async () => {
     try {
       const newSession = await StorageService.startNewSession();
+      setAuthorizedSessionId(newSession.sessionId);
       setCurrentSession(newSession);
       setEvents([]);
       setFirestoreEventsCount(0);
       setIvSiteAssessment(null);
       setDraftNote(null);
+      setEmrRecords([]);
       setPrescription(DEFAULT_PRESCRIPTION);
       setSessionVerificationError(null);
       showToast(`새로운 클라우드 시연 세션 [${newSession.sessionId}]이 시작되었습니다.`);
@@ -357,7 +449,9 @@ export default function App() {
     try {
       const result = await StorageService.verifyAndJoinSession(sessionId);
       if (result.success && result.session) {
+        setAuthorizedSessionId(result.session.sessionId);
         setCurrentSession(result.session);
+        showSessionRecords(result.session.sessionId);
         const evts = result.events || StorageService.loadEvents(sessionId);
         setEvents(evts);
         setFirestoreEventsCount(evts.length);
@@ -405,6 +499,9 @@ export default function App() {
     source: EventSource = 'Manual Confirmation',
     metadata?: any
   ): Promise<{ success: boolean; message?: string }> => {
+    if (!authUser || currentSession.activeNurseUid !== authUser.uid || currentSession.status !== 'ACTIVE') {
+      return { success: false, message: '현재 담당 간호사만 활성 세션에 기록할 수 있습니다.' };
+    }
     if (isTriggeringEvent) {
       return { success: false, message: '이전 기록 저장 작업이 처리 중입니다.' };
     }
@@ -420,7 +517,9 @@ export default function App() {
         verificationResult = 'MATCHED';
         break;
       case 'MEDICATION_VERIFY':
-        description = `처방 약물 [${prescription.medicationName}] 5-Right(환자, 약물, 용량, 경로, 시간) 대조 완료`;
+        description = metadata?.fiveRightsVerified
+          ? `처방 약물 [${prescription.medicationName}] 바코드 일치 및 간호사 5-Rights 수동 확인 완료`
+          : `처방 약물 [${prescription.medicationName}] 바코드 일치 확인. 용량·경로·시간 등은 간호사 별도 확인 필요`;
         verificationResult = 'MATCHED';
         break;
       case 'IV_SITE_ASSESS':
@@ -465,6 +564,7 @@ export default function App() {
         patientId: patient.id,
         sessionId: currentSession.sessionId,
         nurseId: nurse.nurseId,
+        nurseUid: authUser?.uid,
         nurseName: nurse.nurseName,
         verificationResult,
         metadata: metadata || {},
@@ -520,6 +620,8 @@ export default function App() {
         deviceType: 'MOBILE_CAPTURE',
         scannedCode: prescription.id,
         fiveRightsVerified,
+        automatedChecks: ['prescriptionId'],
+        nurseConfirmedFiveRights: fiveRightsVerified,
       });
     }
   };
@@ -540,6 +642,7 @@ export default function App() {
       patientId: patient.id,
       sessionId: currentSession.sessionId,
       nurseId: nurse.nurseId,
+      nurseUid: authUser?.uid,
       nurseName: nurse.nurseName,
       verificationResult: hasSymptom ? 'WARNING' : 'CONFIRMED',
       metadata: { ivAssessment: assessment },
@@ -568,7 +671,6 @@ export default function App() {
       linkedStep: linkedStep || 'NONE',
       completedSteps,
       duplicateEvaluation: 'BYPASSED (VOICE_NOTE is multi-recordable independent event)',
-      transcript: transcript.trim(),
     });
 
     const res = await StorageService.saveVoiceNote({
@@ -576,6 +678,7 @@ export default function App() {
       sessionId: currentSession.sessionId,
       patientId: patient.id,
       nurseId: nurse.nurseId,
+      nurseUid: authUser?.uid,
       nurseName: nurse.nurseName,
       linkedStep: linkedStep || undefined,
       clinicalFindings,
@@ -591,10 +694,60 @@ export default function App() {
   };
 
   // Draft Note Save
-  const handleUpdateDraft = (draft: NursingRecord) => {
-    setDraftNote(draft);
-    StorageService.saveDraft(draft);
+  const handleUpdateDraft = async (draft: NursingRecord): Promise<void> => {
+    if (!authUser || currentSession.activeNurseUid !== authUser.uid) {
+      throw new Error('현재 담당 간호사만 기록을 저장하거나 승인할 수 있습니다.');
+    }
+    const saved: NursingRecord = {
+      ...draft,
+      sessionId: currentSession.sessionId,
+      nurseId: draft.id === draftNote?.id ? (draft.nurseId || nurse.nurseId) : nurse.nurseId,
+      nurseUid: draft.id === draftNote?.id ? (draft.nurseUid || authUser.uid) : authUser.uid,
+      ...(draft.status === 'APPROVED' ? {
+        approver: `${nurse.nurseName} 간호사`,
+        approverId: nurse.nurseId,
+        approverUid: authUser.uid,
+      } : {}),
+    };
+    await StorageService.saveDraft(saved);
+    setDraftNote(saved);
   };
+
+  if (!authReady) {
+    return <div className="min-h-screen flex items-center justify-center">로그인 상태를 확인하는 중입니다.</div>;
+  }
+
+  if (!authUser || !accessReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
+        <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center space-y-4">
+          <h1 className="text-xl font-bold">NurseFlow AI</h1>
+          <p className="text-sm text-slate-600">승인된 간호사 계정으로 로그인해야 세션을 열 수 있습니다. QR 코드는 로그인이나 참여 승인을 대신하지 않습니다.</p>
+          {authError && <p className="text-sm text-rose-700">{authError}</p>}
+          {authUser ? (
+            <button className="rounded-lg bg-slate-800 px-5 py-2 text-white" onClick={() => signOutNurse()}>다른 계정으로 로그인</button>
+          ) : (
+            <button className="rounded-lg bg-teal-700 px-5 py-2 text-white" onClick={() => signInNurse().catch((e) => setAuthError(e.message))}>Google 계정으로 로그인</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (currentMode !== 'PORTAL' && authorizedSessionId !== currentSession.sessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
+        <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center space-y-4">
+          <h1 className="text-xl font-bold">세션 접근 확인</h1>
+          <p className="text-sm text-slate-600">{sessionCheckComplete ? (sessionVerificationError || '참여가 승인된 세션이 없습니다.') : '세션 권한을 확인하는 중입니다.'}</p>
+          {sessionCheckComplete && !new URLSearchParams(window.location.search).has('session') && (
+            <button className="rounded-lg bg-teal-700 px-5 py-2 text-white" onClick={handleStartNewSession}>새 시연 세션 시작</button>
+          )}
+          <button className="rounded-lg border px-5 py-2" onClick={() => handleSelectMode('PORTAL')}>시작 화면</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -684,6 +837,7 @@ export default function App() {
       {currentMode === 'STATION' && (
         <StationView
           nurse={nurse}
+          canWrite={currentSession.activeNurseUid === authUser.uid && currentSession.status === 'ACTIVE'}
           patient={patient}
           prescription={prescription}
           currentSession={currentSession}
@@ -697,9 +851,9 @@ export default function App() {
           isEmrModalOpen={isEmrModalOpen}
           onCloseEmrModal={() => setIsEmrModalOpen(false)}
           onTransmissionSuccess={(newRecord) => {
-            setEmrRecords(StorageService.loadEmrRecords());
-            setDraftNote(StorageService.loadDraft());
-            showToast('가상 병원 EMR 시스템으로 전자서명 간호기록이 안전하게 전송되었습니다.');
+            setEmrRecords((previous) => [newRecord, ...previous.filter((entry) => entry.transferId !== newRecord.transferId)]);
+            showSessionRecords(currentSession.sessionId);
+            showToast('공유 Mock EMR의 Firestore 저장이 확인되었습니다.');
           }}
           onSwitchMode={handleSelectMode}
           onOpenFirebaseGuide={() => setIsFirebaseGuideOpen(true)}
@@ -709,8 +863,19 @@ export default function App() {
           onSimulateEvent={handleTriggerEvent}
         />
       )}
+      {currentMode === 'STATION' && authorizedSessionId === currentSession.sessionId && (
+        <button className="fixed bottom-5 left-5 z-40 rounded-xl bg-teal-700 px-4 py-2 text-sm font-bold text-white shadow-lg" onClick={() => setIsHandoffOpen(true)}>간호사 교대 관리</button>
+      )}
+      {isHandoffOpen && authUser && (
+        <HandoffPanel session={currentSession} currentUid={authUser.uid} onUpdated={setCurrentSession} onClose={() => setIsHandoffOpen(false)} />
+      )}
 
-      {currentMode === 'CAPTURE' && (
+      {currentMode === 'CAPTURE' && currentSession.activeNurseUid !== authUser.uid && (
+        <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6 text-white text-center">
+          <div><h2 className="text-xl font-bold">교대된 세션</h2><p className="mt-2 text-sm">현재 담당 간호사가 아니므로 새 기록을 작성할 수 없습니다. Station에서 기록은 계속 볼 수 있습니다.</p></div>
+        </div>
+      )}
+      {currentMode === 'CAPTURE' && currentSession.activeNurseUid === authUser.uid && (
         <CaptureView
           nurse={nurse}
           patient={patient}

@@ -174,8 +174,8 @@ function generateRuleBasedClinicalNote(patient: any, prescription: any, events: 
     switch (evt.eventType) {
       case 'PATIENT_VERIFY': {
         const method = src === 'QR Scan' || src === 'QR Wristband Scan' 
-          ? '스마트폰 카메라로 환자 손목밴드 QR코드 스캔 및 개방형 질문' 
-          : '개방형 질문 및 환자 인식 밴드 대조';
+          ? '스마트폰 카메라로 환자 손목밴드 QR코드 대조' 
+          : '환자 식별 정보 대조';
         lines.push(`${time} 대상자(${patient?.name || '환자'}, ${patient?.id || 'TEST-P001'}, ${patient?.room || '305호-B'}) ${method}하여 본인 일치 확인 완료함.`);
         break;
       }
@@ -183,7 +183,10 @@ function generateRuleBasedClinicalNote(patient: any, prescription: any, events: 
         const method = src === 'Barcode Scan'
           ? '약물 바코드 스캔 및 처방 정보 대조'
           : '처방 정보 대조';
-        lines.push(`${time} 처방된 ${prescription?.name || '모의 IV 항생제 A'}(${prescription?.route || 'IV'}) ${method} 후 투약 5-Right 원칙(정확한 환자, 약품, 용량, 경로, 시간) 최종 확인 완료함.`);
+        const rights = evt.metadata?.fiveRightsVerified === true
+          ? ' 간호사가 5-Rights 각 항목을 별도 확인함.'
+          : ' 용량·경로·시간 등 5-Rights 전체 확인 여부는 미기록임.';
+        lines.push(`${time} 처방된 ${prescription?.name || '모의 IV 항생제 A'} ${method}함.${rights}`);
         break;
       }
       case 'IV_SITE_ASSESS': {
@@ -198,7 +201,7 @@ function generateRuleBasedClinicalNote(patient: any, prescription: any, events: 
           const voiceTag = src === 'Voice Confirmation' ? ' [음성 입력 확인]' : '';
           lines.push(`${time} IV 삽입 부위(${siteName}) 사정 시행함${voiceTag}: ${painText}, ${rednessText}, ${swellingText}, ${leakageText}${notesText}.`);
         } else {
-          lines.push(`${time} IV 삽입 부위 사정 시행함.`);
+          lines.push(`${time} IV 삽입 부위 사정 이벤트 기록됨. 세부 소견은 확인 필요.`);
         }
         break;
       }
@@ -209,7 +212,7 @@ function generateRuleBasedClinicalNote(patient: any, prescription: any, events: 
       }
       case 'INFUSION_END': {
         const voiceTag = src === 'Voice Confirmation' ? ' [음성 확인]' : '';
-        lines.push(`${time} ${prescription?.name || '모의 IV 항생제 A'} 전량 주입 완료되어 투여 종료함${voiceTag}.`);
+        lines.push(`${time} ${prescription?.name || '모의 IV 항생제 A'} 투여 종료 이벤트 기록됨${voiceTag}.`);
         break;
       }
       default:

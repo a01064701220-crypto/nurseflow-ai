@@ -1,64 +1,127 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
-    function isAuthenticated() {
+    function signedIn() {
       return request.auth != null;
     }
 
-    // Nurse Profiles
-    match /nurses/{nurseId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || true;
+    function nursePath(uid) {
+      return /databases/$(database)/documents/nurses/$(uid);
     }
 
-    // Inpatient and Medication Orders (Clinical master data)
+    function sessionPath(sessionId) {
+      return /databases/$(database)/documents/demoSessions/$(sessionId);
+    }
+
+    function approvedNurse() {
+      return signedIn()
+        && exists(nursePath(request.auth.uid))
+        && get(nursePath(request.auth.uid)).data.approved == true;
+    }
+
+    function sessionMember(sessionId) {
+      return approvedNurse()
+        && exists(sessionPath(sessionId))
+        && request.auth.uid in get(sessionPath(sessionId)).data.participantUids;
+    }
+
+    function activeNurse(sessionId) {
+      return sessionMember(sessionId)
+        && get(sessionPath(sessionId)).data.status == 'ACTIVE'
+        && get(sessionPath(sessionId)).data.activeNurseUid == request.auth.uid;
+    }
+
+    match /nurses/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || approvedNurse());
+      allow list: if approvedNurse();
+      allow write: if false; // Provision approved profiles through a trusted administrator.
+    }
+
     match /patients/{patientId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || true;
+      allow read: if approvedNurse();
+      allow write: if false;
     }
+
     match /medicationOrders/{orderId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || true;
+      allow read: if approvedNurse();
+      allow write: if false;
     }
 
-    // Interactive Demo Sessions:
-    // Allow read to everyone (so Mobile Capture can verify session from QR URL)
-    // Allow create/update if session data matches sessionId
     match /demoSessions/{sessionId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.sessionId == sessionId;
-      allow delete: if false; // Archive rather than delete
-    }
-
-    // Bedside Nursing Events: Append-only audit trail
-    // CRITICAL CLINICAL SECURITY:
-    // Events can only be created if the target demoSession actually exists in Firestore!
-    // This strictly ensures only participants with a valid active session can log events.
-    match /nursingEvents/{eventId} {
-      allow read: if true;
-      allow create: if request.resource.data.eventId == eventId
-        && request.resource.data.sessionId != null
-        && request.resource.data.patientId != null
-        && request.resource.data.eventType != null
-        && exists(/databases/$(database)/documents/demoSessions/$(request.resource.data.sessionId));
-      // Events are strictly append-only: updates and deletes are prohibited to preserve legal audit trail
-      allow update, delete: if false;
-    }
-
-    // Nursing Progress Records (AI drafts & Nurse approvals)
-    match /nursingRecords/{recordId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.id == recordId;
+      allow read: if approvedNurse()
+        && request.auth.uid in resource.data.participantUids;
+      allow create: if approvedNurse()
+        && request.resource.data.sessionId == sessionId
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.activeNurseUid == request.auth.uid
+        && request.auth.uid in request.resource.data.participantUids
+        && request.resource.data.status == 'ACTIVE';
+      allow update: if approvedNurse()
+        && request.resource.data.sessionId == resource.data.sessionId
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.patientId == resource.data.patientId
+        && (
+          (activeNurse(sessionId)
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['lastSyncAt', 'eventsCount', 'emrTransmitted', 'status', 'endedAt']))
+          || (request.auth.uid == resource.data.ownerUid
+            && request.auth.uid in request.resource.data.participantUids
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['participantUids', 'lastSyncAt']))
+          || (activeNurse(sessionId)
+            && request.resource.data.activeNurseUid in resource.data.participantUids
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['activeNurseUid', 'lastSyncAt']))
+        );
       allow delete: if false;
     }
 
-    // EMR Transmissions: Legally binding electronic transfers
+    match /nursingEvents/{eventId} {
+      allow read: if sessionMember(resource.data.sessionId);
+      allow create: if activeNurse(request.resource.data.sessionId)
+        && request.resource.data.eventId == eventId
+        && request.resource.data.patientId == get(sessionPath(request.resource.data.sessionId)).data.patientId
+        && request.resource.data.nurseUid == request.auth.uid
+        && request.resource.data.nurseId == get(nursePath(request.auth.uid)).data.nurseId
+        && request.resource.data.eventType is string;
+      allow update, delete: if false;
+    }
+
+    match /nursingRecords/{recordId} {
+      allow read: if sessionMember(resource.data.sessionId);
+      allow create: if activeNurse(request.resource.data.sessionId)
+        && request.resource.data.id == recordId
+        && request.resource.data.nurseUid == request.auth.uid
+        && request.resource.data.status == 'DRAFT_PENDING_REVIEW';
+      allow update: if activeNurse(resource.data.sessionId)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.sessionId == resource.data.sessionId
+        && request.resource.data.patientId == resource.data.patientId
+        && request.resource.data.nurseUid == resource.data.nurseUid
+        && (
+          (resource.data.status == 'DRAFT_PENDING_REVIEW'
+            && request.resource.data.version >= resource.data.version
+            && (request.resource.data.status == 'DRAFT_PENDING_REVIEW'
+              || (request.resource.data.status == 'APPROVED'
+                && request.resource.data.approverUid == request.auth.uid)))
+          || (resource.data.status == 'APPROVED'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['emrTransmitted', 'emrTransmittedAt']))
+        );
+      allow delete: if false;
+    }
+
     match /emrTransfers/{transferId} {
-      allow read: if true;
-      allow create: if request.resource.data.transferId == transferId 
-        && request.resource.data.signatureHash != null;
-      // Immutable transfer records
+      allow read: if sessionMember(resource.data.sessionId);
+      allow create: if activeNurse(request.resource.data.sessionId)
+        && request.resource.data.transferId == transferId
+        && request.resource.data.nurseUid == request.auth.uid
+        && request.resource.data.signatureHash is string
+        && request.resource.data.nursingRecordId is string
+        && get(/databases/$(database)/documents/nursingRecords/$(request.resource.data.nursingRecordId)).data.status == 'APPROVED'
+        && get(/databases/$(database)/documents/nursingRecords/$(request.resource.data.nursingRecordId)).data.sessionId == request.resource.data.sessionId
+        && get(/databases/$(database)/documents/nursingRecords/$(request.resource.data.nursingRecordId)).data.patientId == request.resource.data.patientId
+        && get(/databases/$(database)/documents/nursingRecords/$(request.resource.data.nursingRecordId)).data.version == request.resource.data.version;
       allow update, delete: if false;
     }
   }

@@ -128,7 +128,7 @@ export const ArchitectureView: React.FC<ArchitectureViewProps> = ({
               <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono font-bold">FHIR/HL7</span>
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-              승인된 간호기록에 전자서명 해시를 결합하여 병원 HIS/EMR로 전송. 현재는 Mock EMR로 시뮬레이션되며 실제 연동 시 어댑터만 교체 가능.
+              승인된 간호기록을 공유 Mock EMR에 저장하고 시연용 식별값을 표시합니다. 실제 전자서명이나 병원 HIS/EMR 전송은 수행하지 않습니다.
             </p>
             <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
               <Database className="w-3 h-3" />

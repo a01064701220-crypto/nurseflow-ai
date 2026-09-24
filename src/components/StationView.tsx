@@ -46,6 +46,7 @@ export type StationTab = 'dashboard' | 'records' | 'prep';
 
 interface StationViewProps {
   nurse: any;
+  canWrite: boolean;
   patient: Patient;
   prescription: MedicationOrder;
   currentSession: DemoSession;
@@ -54,7 +55,7 @@ interface StationViewProps {
   draftNote: NursingRecord | null;
   emrRecords: EMRTransfer[];
   onStartNewSession: () => void;
-  onUpdateDraft: (draft: NursingRecord) => void;
+  onUpdateDraft: (draft: NursingRecord) => Promise<void>;
   onOpenEmrModal: () => void;
   isEmrModalOpen: boolean;
   onCloseEmrModal: () => void;
@@ -69,6 +70,7 @@ interface StationViewProps {
 
 export const StationView: React.FC<StationViewProps> = ({
   nurse,
+  canWrite,
   patient,
   prescription,
   currentSession,
@@ -385,6 +387,8 @@ export const StationView: React.FC<StationViewProps> = ({
 
               <div className="lg:col-span-7 space-y-4">
                 <AiDraftSection
+                  nurse={nurse}
+                  canWrite={canWrite}
                   patient={patient}
                   prescription={prescription}
                   events={sessionEvents}

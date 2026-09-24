@@ -21,19 +21,24 @@ import {
   Prescription,
   IvSiteAssessment,
   EditHistoryItem,
+  Nurse,
 } from '../types';
 
 interface AiDraftSectionProps {
+  nurse: Nurse;
+  canWrite: boolean;
   patient: Patient;
   prescription: Prescription;
   events: NursingEvent[];
   ivSiteAssessment: IvSiteAssessment | null;
   draftNote: DraftNote | null;
-  onUpdateDraft: (draft: DraftNote) => void;
+  onUpdateDraft: (draft: DraftNote) => Promise<void>;
   onOpenEmrModal: () => void;
 }
 
 export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
+  nurse,
+  canWrite,
   patient,
   prescription,
   events,
@@ -51,6 +56,10 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
 
   // Trigger AI Draft Generation via Backend Proxy (/api/generate-draft)
   const handleGenerateDraft = async () => {
+    if (!canWrite) {
+      setErrorMessage('현재 담당 간호사만 새 초안을 생성할 수 있습니다.');
+      return;
+    }
     if (events.length === 0) {
       setErrorMessage('간호 행위 이벤트가 최소 1건 이상 기록되어야 AI 초안을 생성할 수 있습니다.');
       return;
@@ -85,6 +94,10 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
             eventSource: e.eventSource,
             transcript: e.transcript || e.metadata?.transcript || e.metadata?.rawSpeechText,
             linkedStep: e.linkedStep || e.metadata?.linkedStep,
+            metadata: {
+              fiveRightsVerified: e.metadata?.fiveRightsVerified === true,
+              ivAssessment: e.metadata?.ivAssessment,
+            },
           })),
           ivSiteAssessment,
         }),
@@ -105,13 +118,15 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
         content: generatedContent,
         status: 'DRAFT_PENDING_REVIEW', // Mandatory rule: AI output MUST be pending nurse verification
         version: 1,
-        generatedBy: 'Google Gemini 3.8 Flash (AI 보조)',
+        generatedBy: data.model === 'clinical-rules-fallback'
+          ? '규칙 기반 대체 템플릿 (Gemini 생성 아님)'
+          : `Google Gemini ${data.model || ''} (AI 보조)`,
         generatedAt: now,
         editHistory: [],
         emrTransmitted: false,
       };
 
-      onUpdateDraft(newDraft);
+      await onUpdateDraft(newDraft);
       setEditContent(generatedContent);
       setIsEditing(false);
     } catch (err: any) {
@@ -126,13 +141,15 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
 
   // Switch to Manual Edit Mode
   const handleStartEdit = () => {
+    if (!canWrite) return;
     setEditContent(draftNote ? draftNote.content : '');
     setIsEditing(true);
     setEditReason('');
   };
 
   // Save Edits without Final Approval yet
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
+    if (!canWrite) return;
     if (!draftNote) {
       // Created manually from scratch
       const now = new Date().toLocaleTimeString('ko-KR', { hour12: false });
@@ -147,7 +164,12 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
         editHistory: [],
         emrTransmitted: false,
       };
-      onUpdateDraft(newDraft);
+      try {
+        await onUpdateDraft(newDraft);
+      } catch (error: any) {
+        setErrorMessage(error?.message || '기록 저장에 실패했습니다.');
+        return;
+      }
       setIsEditing(false);
       return;
     }
@@ -157,25 +179,46 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
       version: draftNote.version,
       content: draftNote.content,
       editedAt: now,
-      editor: '양두영 간호사',
+      editor: `${nurse.nurseName} 간호사`,
       reason: editReason || '간호사 임상 검토 및 문구 수정',
     };
 
     const updated: DraftNote = {
       ...draftNote,
+      id: draftNote.status === 'APPROVED' ? `DRAFT-${Date.now()}` : draftNote.id,
       content: editContent.trim(),
       status: 'DRAFT_PENDING_REVIEW',
       version: draftNote.version + 1,
       editHistory: [historyItem, ...draftNote.editHistory],
+      emrTransmitted: false,
     };
+    if (draftNote.status === 'APPROVED') {
+      delete updated.approvedAt;
+      delete updated.approver;
+      delete updated.approverId;
+      delete updated.approverUid;
+      delete updated.emrTransmittedAt;
+      delete updated.nurseUid;
+      delete updated.nurseId;
+    }
 
-    onUpdateDraft(updated);
+    try {
+      await onUpdateDraft(updated);
+    } catch (error: any) {
+      setErrorMessage(error?.message || '기록 저장에 실패했습니다.');
+      return;
+    }
     setIsEditing(false);
   };
 
   // Review & Approve (최종 승인)
-  const handleApprove = () => {
+  const handleApprove = async () => {
+    if (!canWrite) return;
     if (!draftNote) return;
+    if (draftNote.status === 'APPROVED') {
+      setErrorMessage('승인된 기록은 직접 덮어쓸 수 없습니다. 수정본을 새 초안으로 저장한 뒤 승인해 주세요.');
+      return;
+    }
 
     const now = new Date().toLocaleString('ko-KR', {
       year: 'numeric',
@@ -192,11 +235,16 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
       content: isEditing ? editContent.trim() : draftNote.content,
       status: 'APPROVED',
       approvedAt: now,
-      approver: '양두영 간호사',
-      approverId: 'NURSE-YDY-5W',
+      approver: `${nurse.nurseName} 간호사`,
+      approverId: nurse.nurseId,
     };
 
-    onUpdateDraft(approvedDraft);
+    try {
+      await onUpdateDraft(approvedDraft);
+    } catch (error: any) {
+      setErrorMessage(error?.message || '승인 저장에 실패했습니다.');
+      return;
+    }
     setIsEditing(false);
   };
 
@@ -214,13 +262,14 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             수집된 이벤트 타임라인과 IV 사정 소견을 바탕으로 Gemini AI가 임상 간호기록 초안을 생성합니다.
           </p>
+          {!canWrite && <p className="text-xs text-amber-700">현재 세션의 담당 간호사가 아니므로 기록을 읽기 전용으로 표시합니다.</p>}
         </div>
 
         {/* Primary AI Draft Trigger Button */}
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
             type="button"
-            disabled={isLoading || events.length === 0}
+            disabled={!canWrite || isLoading || events.length === 0}
             onClick={handleGenerateDraft}
             className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-md ${
               events.length === 0
@@ -258,6 +307,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
           <button
             type="button"
             onClick={handleStartEdit}
+            disabled={!canWrite}
             className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs whitespace-nowrap self-end sm:self-center"
           >
             직접 수동 작성하기
@@ -279,6 +329,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
             <button
               type="button"
               onClick={handleStartEdit}
+              disabled={!canWrite}
               className="text-xs font-semibold text-teal-600 dark:text-teal-400 hover:underline inline-flex items-center gap-1"
             >
               <Edit3 className="w-3.5 h-3.5" />
@@ -378,18 +429,20 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
                   <button
                     type="button"
                     onClick={handleSaveEdit}
+                    disabled={!canWrite}
                     className="px-4 py-2 text-xs font-bold rounded-lg border border-teal-500 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40"
                   >
                     수정본 저장 (초안 유지)
                   </button>
-                  <button
+                  {draftNote?.status !== 'APPROVED' && <button
                     type="button"
                     onClick={handleApprove}
+                    disabled={!canWrite}
                     className="px-5 py-2 text-xs font-bold rounded-lg bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-500/20 flex items-center gap-1.5"
                   >
                     <Check className="w-4 h-4" />
                     수정 후 즉시 검토 및 승인
-                  </button>
+                  </button>}
                 </div>
               </div>
             </div>
@@ -407,6 +460,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
                   <button
                     type="button"
                     onClick={handleStartEdit}
+                    disabled={!canWrite}
                     className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
@@ -416,7 +470,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
                   {/* AI 초안 다시 생성 */}
                   <button
                     type="button"
-                    disabled={isLoading}
+                    disabled={!canWrite || isLoading}
                     onClick={handleGenerateDraft}
                     className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors"
                   >
@@ -431,6 +485,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
                     <button
                       type="button"
                       onClick={handleApprove}
+                      disabled={!canWrite}
                       className="px-5 py-2.5 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-500/20 flex items-center gap-1.5 transition-all active:scale-[0.98]"
                     >
                       <CheckCircle className="w-4 h-4" />
@@ -440,6 +495,7 @@ export const AiDraftSection: React.FC<AiDraftSectionProps> = ({
                     <button
                       type="button"
                       onClick={onOpenEmrModal}
+                      disabled={!canWrite}
                       className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-[0.98] ${
                         draftNote.emrTransmitted
                           ? 'bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white'

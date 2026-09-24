@@ -117,7 +117,7 @@ export const EmrTransmissionModal: React.FC<EmrTransmissionModalProps> = ({
               </span>
             </div>
             <div className="flex justify-between border-b border-slate-200/60 dark:border-slate-800 pb-2">
-              <span className="text-slate-400">승인 간호사 (전자서명)</span>
+              <span className="text-slate-400">승인 간호사 (시연용 승인)</span>
               <span className="font-semibold text-teal-700 dark:text-teal-300">
                 {draftNote.approver || '양두영 간호사'}
               </span>
@@ -143,7 +143,7 @@ export const EmrTransmissionModal: React.FC<EmrTransmissionModalProps> = ({
               <div>
                 <p className="font-bold">가상 EMR 서버와 통신 중...</p>
                 <p className="text-[11px] text-sky-600 dark:text-sky-400">
-                  전자서명 해시 검증 및 간호기록 차트 암호화 전송 진행 중입니다.
+                  공유 Mock EMR의 Firestore 저장 결과를 확인하는 중입니다.
                 </p>
               </div>
             </div>
@@ -157,7 +157,7 @@ export const EmrTransmissionModal: React.FC<EmrTransmissionModalProps> = ({
               </div>
               <p className="text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
                 차트 번호: <strong className="font-mono">{transmittedRecord?.chartNumber}</strong> | 
-                서명 키: <strong className="font-mono">{transmittedRecord?.signatureHash}</strong>
+                시연용 서명 식별값: <strong className="font-mono">{transmittedRecord?.signatureHash}</strong>
               </p>
             </div>
           )}

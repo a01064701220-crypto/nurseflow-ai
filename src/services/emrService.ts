@@ -10,7 +10,6 @@ import {
   StorageService,
   DEFAULT_PATIENT,
   DEFAULT_PRESCRIPTION,
-  DEFAULT_NURSE,
 } from './storageService';
 
 export const INITIAL_PATIENT: Patient = DEFAULT_PATIENT;
@@ -29,8 +28,8 @@ export class EmrService {
     return StorageService.loadDraft();
   }
 
-  static saveDraft(draft: DraftNote | null): void {
-    StorageService.saveDraft(draft);
+  static saveDraft(draft: DraftNote | null): Promise<void> {
+    return StorageService.saveDraft(draft);
   }
 
   static loadPrescription(): Prescription {
@@ -45,8 +44,8 @@ export class EmrService {
     return StorageService.loadEmrRecords();
   }
 
-  static saveEmrRecords(records: EmrRecord[]): void {
-    StorageService.saveEmrRecords(records);
+  static saveEmrRecords(records: EmrRecord[]): Promise<void> {
+    return StorageService.saveEmrRecords(records);
   }
 
   static getCurrentSession(): DemoSession {
@@ -69,6 +68,9 @@ export class EmrService {
     if (draftNote.status !== 'APPROVED') {
       throw new Error('승인되지 않은 기록은 EMR에 전송할 수 없습니다.');
     }
+    if (!draftNote.sessionId || !draftNote.approverUid || !draftNote.approverId || !draftNote.approver) {
+      throw new Error('승인 간호사와 세션 정보가 없어 공유 Mock EMR에 저장할 수 없습니다.');
+    }
 
     // Simulate network delay (1.0s)
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -76,7 +78,9 @@ export class EmrService {
     const existingRecords = this.loadEmrRecords();
     // Prevent duplicate transmission of identical version
     const duplicate = existingRecords.find(
-      (r) => r.patientId === patient.id && r.version === draftNote.version && r.content === draftNote.content
+      (r) => r.sessionId === draftNote.sessionId
+        && r.nursingRecordId === draftNote.id
+        && r.status === 'TRANSMITTED'
     );
     if (duplicate) {
       return { success: true, emrRecord: duplicate };
@@ -93,18 +97,21 @@ export class EmrService {
       hour12: false,
     });
 
-    const signatureHash = `SHA256-${Math.random().toString(36).substring(2, 10).toUpperCase()}-${Date.now().toString(16).toUpperCase()}`;
+    const signatureHash = `DEMO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const newEmrRecord: EmrRecord = {
-      transferId: `TR-${Date.now()}`,
+      transferId: `TR-${draftNote.id}-V${draftNote.version}`,
+      nursingRecordId: draftNote.id,
+      sessionId: draftNote.sessionId,
+      nurseUid: draftNote.approverUid,
       emrRecordId: `EMR-${patient.id}-${Date.now()}`,
       chartNumber: `CHART-5W-${Math.floor(100000 + Math.random() * 900000)}`,
       patientId: patient.id,
       patientName: patient.name,
       room: patient.room,
       content: draftNote.content,
-      approvedNurse: draftNote.approver || `${DEFAULT_NURSE.nurseName} 간호사`,
-      approvedNurseId: DEFAULT_NURSE.nurseId,
+      approvedNurse: draftNote.approver,
+      approvedNurseId: draftNote.approverId,
       approvedAt: draftNote.approvedAt || formattedNow,
       transferredAt: formattedNow,
       version: draftNote.version,
@@ -115,15 +122,12 @@ export class EmrService {
       targetSystem: '가상 차트 연계 서버 (Virtual Hospital EMR v4.2)',
     };
 
-    const updated = [newEmrRecord, ...existingRecords];
-    this.saveEmrRecords(updated);
-
     const updatedDraft: DraftNote = {
       ...draftNote,
       emrTransmitted: true,
       emrTransmittedAt: formattedNow,
     };
-    this.saveDraft(updatedDraft);
+    await StorageService.saveEmrTransmission(newEmrRecord, updatedDraft);
 
     return { success: true, emrRecord: newEmrRecord };
   }

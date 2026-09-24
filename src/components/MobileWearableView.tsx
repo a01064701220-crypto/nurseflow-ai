@@ -248,7 +248,7 @@ export const MobileWearableView: React.FC<MobileWearableViewProps> = ({
               약물 바코드 스캔
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              {hasMedVerify ? '처방 5-Right 일치' : '약품 라벨 바코드'}
+              {hasMedVerify ? '처방번호 일치 기록됨' : '약품 라벨 바코드'}
             </div>
           </div>
         </button>

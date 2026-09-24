@@ -280,13 +280,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
     if (isMatched) {
       setScannerStatus('DECODED_MATCHED');
-      // Auto-populate 5-Rights ONLY when matched
+      // A matching prescription ID does not verify dose, route, time or patient.
       setFiveRights({
-        rightPatient: true,
-        rightDrug: true,
-        rightDose: true,
-        rightRoute: true,
-        rightTime: true,
+        rightPatient: false,
+        rightDrug: false,
+        rightDose: false,
+        rightRoute: false,
+        rightTime: false,
       });
     } else {
       setScannerStatus('DECODED_MISMATCH');
