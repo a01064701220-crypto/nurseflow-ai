@@ -449,7 +449,29 @@ The demo uses synthetic data only. No real patient information is used.
 
 ### Screenshots
 
-<!-- Add screenshots here -->
+#### 1. Secure Nurse Authentication
+
+Only approved test accounts can access the NurseFlow AI prototype.
+
+![Secure Nurse Authentication](docs/screenshots/login.png)
+
+#### 2. NurseFlow Station Dashboard
+
+The Station dashboard combines patient context, medication information, a unified nursing event timeline, and AI-assisted nursing documentation.
+
+![NurseFlow Station Dashboard](docs/screenshots/station-dashboard.png)
+
+#### 3. Hands-Free Nursing Workflow Prototype
+
+The mobile-oriented workflow demonstrates patient verification, medication barcode scanning, IV-site assessment, voice nursing notes, and medication administration events.
+
+![Hands-Free Nursing Workflow](docs/screenshots/handsfree-workflow.png)
+
+#### 4. EMR-Oriented Transfer Simulation
+
+After nurse review and approval, the generated nursing record can proceed to a simulated EMR transfer workflow with traceability information.
+
+![EMR Transfer Simulation](docs/screenshots/emr-simulation.png)
 
 ## ⭐ Project Status
 
