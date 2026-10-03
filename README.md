@@ -274,9 +274,7 @@ For development and demonstration, use **synthetic or test data only**.
 
 ### 5. Run the Project
 
-Install the dependencies first and then run the development script defined in `package.json`.
-
-For a standard Vite development setup:
+Install the dependencies first and start the development server:
 
 ```bash
 bun run dev
@@ -419,9 +417,9 @@ The project also aims to provide an accessible example for students who are inte
 
 ## 📄 License
 
-This project is intended to be released under the **MIT License**.
+This project is licensed under the **MIT License**.
 
-See the `LICENSE` file for the full license text.
+See the [LICENSE](LICENSE) file for the full license text.
 
 ---
 
@@ -432,6 +430,26 @@ Maintained by **a01064701220-crypto**.
 This project started as an exploration by a nursing student interested in how AI and software engineering could be applied to real nursing workflow problems.
 
 ---
+
+## 🎬 Demo
+
+NurseFlow AI currently restricts application access to approved test accounts.
+
+To preserve the prototype's authentication and security model, reviewers can inspect the workflow through the screenshots below.
+
+The demo uses synthetic data only. No real patient information is used.
+
+### Workflow
+
+1. Capture nursing events through voice, camera, or manual input.
+2. Convert events into structured clinical context.
+3. Generate an AI-assisted nursing draft.
+4. Require nurse review and approval.
+5. Prepare the approved record for EMR-oriented transfer.
+
+### Screenshots
+
+<!-- Add screenshots here -->
 
 ## ⭐ Project Status
 
